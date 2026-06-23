@@ -1288,9 +1288,10 @@ test("recent thread patch preserves current upstream state-db options", () => {
   assert.match(patched, /useStateDbOnly:n=!1/);
 });
 
-test("start conversation routing helper routes only catalog-registered slugs", () => {
+test("start conversation routing helper routes only catalog-registered slugs with explicit providers", () => {
   const sandbox = {
     __codexLinuxCustomModelSlugs: new Set(["opencode-go-kimi-k2-6", "provider-specific-custom"]),
+    __codexLinuxCustomModelProviders: new Map([["opencode-go-kimi-k2-6", "codex_shim"]]),
     __codexLinuxCustomModelCatalogPaths: new Map([
       ["opencode-go-kimi-k2-6", "/tmp/codex-shim/custom_model_catalog.json"],
     ]),
@@ -1336,9 +1337,11 @@ test("start conversation routing helper routes only catalog-registered slugs", (
   assert.equal(sandbox.crof.modelProvider, null);
   assert.equal(sandbox.composer.modelProvider, null);
   assert.equal(sandbox.cursor.modelProvider, null);
-  assert.equal(sandbox.registered.modelProvider, "codex_shim");
+  assert.equal(sandbox.registered.modelProvider, null);
+  assert.equal(sandbox.registered.config.model_provider, "openai");
   assert.equal(sandbox.autoReview.modelProvider, null);
   assert.equal(sandbox.autoRouter.modelProvider, null);
+  assert.equal(ROUTING_HELPER_SOURCE.includes("??`codex_shim`"), false);
 });
 
 test("start conversation routing helper routes explicit providers without injecting codex_shim", () => {
