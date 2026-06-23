@@ -83,6 +83,12 @@ Run the feature tests with:
 node --test linux-features/custom-model-catalog/test.js
 ```
 
+Validate a custom catalog before using it:
+
+```bash
+node scripts/validate-custom-model-catalog.js docs/examples/custom-model-catalog/direct-provider.json
+```
+
 Run the workstation policy after changing this feature:
 
 ```bash

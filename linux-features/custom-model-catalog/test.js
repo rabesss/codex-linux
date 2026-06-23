@@ -609,6 +609,7 @@ test("webview catalog route merges configured loopback catalog URL sources", asy
 test("shared custom model catalog schema examples stay public-safe and provider-aware", () => {
   const schemaPath = path.join(__dirname, "..", "..", "docs", "custom-model-catalog.schema.json");
   const examplesDir = path.join(__dirname, "..", "..", "docs", "examples", "custom-model-catalog");
+  const validatorPath = path.join(__dirname, "..", "..", "scripts", "validate-custom-model-catalog.js");
   const examples = [
     "direct-provider.json",
     "local-provider.json",
@@ -640,6 +641,78 @@ test("shared custom model catalog schema examples stay public-safe and provider-
     assert.doesNotMatch(serialized, /sk-[A-Za-z0-9]/u, example);
     assert.doesNotMatch(serialized, /\/home\/ravish/u, example);
     assert.doesNotMatch(serialized, /api_key(_file|_credential)?/u, example);
+  }
+
+  const validRun = childProcess.spawnSync(
+    process.execPath,
+    [validatorPath, "--json", ...examples.map((example) => path.join(examplesDir, example))],
+    { encoding: "utf8" },
+  );
+  assert.equal(validRun.status, 0, validRun.stderr || validRun.stdout);
+  const validReport = JSON.parse(validRun.stdout);
+  assert.equal(validReport.ok, true);
+  assert.equal(validReport.catalogs.length, examples.length);
+  assert.deepEqual(validReport.errors, []);
+});
+
+test("shared custom model catalog validator rejects unsafe or ambiguous rows", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-custom-model-invalid-catalog-"));
+  const validatorPath = path.join(__dirname, "..", "..", "scripts", "validate-custom-model-catalog.js");
+  const catalogPath = path.join(tempDir, "invalid.json");
+  try {
+    fs.writeFileSync(
+      catalogPath,
+      JSON.stringify({
+        version: 1,
+        providers: {
+          openrouter: {
+            name: "OpenRouter",
+            base_url: "https://openrouter.ai/api/v1",
+            wire_api: "responses",
+            experimental_bearer_token: "s" + "k-not-a-real-token-but-key-shaped",
+          },
+        },
+        models: [
+          {
+            slug: "openrouter-qwen3-coder",
+            model: "qwen/qwen3-coder",
+            model_provider: "openrouter",
+            display_name: "Qwen3 Coder",
+            provider_display_name: "OpenRouter",
+            context_window: 0,
+            input_modalities: ["text", "audio"],
+          },
+          {
+            slug: "openrouter-qwen3-coder",
+            model: "qwen/qwen3-coder:free",
+            model_provider: "openrouter",
+            display_name: "Qwen3 Coder",
+            provider_display_name: "OpenRouter",
+          },
+          {
+            slug: "missing-provider",
+            model: "vendor/model",
+            model_provider: "external_provider",
+            display_name: "Missing Provider",
+            provider_display_name: "External Provider",
+          },
+        ],
+      }),
+    );
+    const invalidRun = childProcess.spawnSync(process.execPath, [validatorPath, "--json", catalogPath], {
+      encoding: "utf8",
+    });
+    assert.equal(invalidRun.status, 1);
+    const invalidReport = JSON.parse(invalidRun.stdout);
+    assert.equal(invalidReport.ok, false);
+    assert.match(invalidReport.errors.join("\n"), /experimental_bearer_token/);
+    assert.match(invalidReport.errors.join("\n"), /duplicate slug/);
+    assert.match(invalidReport.errors.join("\n"), /duplicate visible row/);
+    assert.match(invalidReport.errors.join("\n"), /context_window/);
+    assert.match(invalidReport.errors.join("\n"), /unsupported modality "audio"/);
+    assert.match(invalidReport.warnings.join("\n"), /external_provider/);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
 

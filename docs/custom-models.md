@@ -84,6 +84,15 @@ for the local Ollama/LM Studio flow.
    Examples live under
    [`docs/examples/custom-model-catalog`](examples/custom-model-catalog/):
    direct provider, local provider, plain shim, and CLIProxyAPI-through-shim.
+   Validate a catalog before restarting Desktop:
+
+   ```bash
+   node scripts/validate-custom-model-catalog.js "$CODEX_HOME/custom-models.json"
+   ```
+
+   The validator checks the provider-aware catalog contract, duplicate visible
+   rows, unsupported modalities, malformed context metadata, and plaintext
+   credential-shaped fields.
 
 4. Keep a durable, non-default provider entry for each provider used by saved
    custom threads. For direct providers, use `env_key` or another protected
