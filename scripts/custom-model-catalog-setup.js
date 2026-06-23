@@ -18,9 +18,11 @@ function usage() {
   return [
     "Usage:",
     "  custom-model-catalog-setup.js add-direct --provider <id> --provider-name <name> --base-url <url> --wire-api <responses|chat|openai|anthropic> --env-key <ENV> --slug <slug> --model <upstream-id> --display-name <label> [options]",
+    "  custom-model-catalog-setup.js inspect [--catalog <path>] [--json]",
     "",
     "Options:",
     "  --catalog <path>                 Catalog path (default: $CODEX_HOME/custom-models.json)",
+    "  --json                           Print machine-readable inspect output",
     "  --provider-display-name <label>  Picker provider group label (default: --provider-name)",
     "  --description <text>             Picker tooltip text",
     "  --env-header <Header=ENV>        Header value sourced from an environment variable",
@@ -61,6 +63,7 @@ function parseArgs(argv) {
     supportsStreaming: true,
     source: "user-catalog",
     dryRun: false,
+    json: false,
   };
 
   while (args.length > 0) {
@@ -68,6 +71,9 @@ function parseArgs(argv) {
     switch (flag) {
       case "--catalog":
         options.catalog = takeValue(args, flag);
+        break;
+      case "--json":
+        options.json = true;
         break;
       case "--provider":
         options.provider = takeValue(args, flag);
@@ -210,8 +216,18 @@ function validateOptions(options, env = process.env) {
   if (options.help) {
     return { help: true };
   }
+  if (options.command === "inspect") {
+    return {
+      command: "inspect",
+      catalog: path.resolve(options.catalog || defaultCatalogPath(env)),
+      json: options.json,
+    };
+  }
   if (options.command !== "add-direct") {
-    throw new Error("Expected command: add-direct");
+    throw new Error("Expected command: add-direct or inspect");
+  }
+  if (options.json) {
+    throw new Error("--json is only supported with inspect");
   }
 
   const provider = validateIdentifier(options.provider, "--provider");
@@ -294,6 +310,13 @@ function readCatalog(catalogPath) {
     providers: data.providers && typeof data.providers === "object" && !Array.isArray(data.providers) ? data.providers : {},
     models: Array.isArray(data.models) ? data.models : [],
   };
+}
+
+function readExistingCatalog(catalogPath) {
+  if (!fs.existsSync(catalogPath)) {
+    throw new Error(`${catalogPath}: catalog does not exist`);
+  }
+  return readCatalog(catalogPath);
 }
 
 function providerConfig(options) {
@@ -391,6 +414,120 @@ function validateMergedCatalog(catalog, source) {
   return result;
 }
 
+function modelCapabilityReport(model, index) {
+  const inputModalities = Array.isArray(model.input_modalities) && model.input_modalities.length > 0
+    ? model.input_modalities
+    : ["text"];
+  const truncationLimit = model.truncation_policy && Number.isInteger(model.truncation_policy.limit)
+    ? model.truncation_policy.limit
+    : null;
+  const capabilities = {
+    inputModalities,
+    imageInput: inputModalities.includes("image"),
+    supportsTools: model.supports_tools === true,
+    supportsReasoning: model.supports_reasoning === true,
+    supportsStreaming: model.supports_streaming !== false,
+    contextWindow: Number.isInteger(model.context_window) ? model.context_window : null,
+    maxContextWindow: Number.isInteger(model.max_context_window) ? model.max_context_window : null,
+    autoCompactTokenLimit: Number.isInteger(model.auto_compact_token_limit) ? model.auto_compact_token_limit : null,
+    truncationLimit,
+  };
+  const warnings = [];
+  if (!capabilities.imageInput) {
+    warnings.push("image input disabled");
+  }
+  if (!capabilities.supportsTools) {
+    warnings.push("Browser/MCP/Computer Use tools not advertised");
+  }
+  if (!capabilities.supportsStreaming) {
+    warnings.push("streaming disabled");
+  }
+  if (capabilities.contextWindow == null && capabilities.maxContextWindow == null) {
+    warnings.push("context window metadata missing");
+  }
+  if (capabilities.autoCompactTokenLimit == null) {
+    warnings.push("auto-compaction threshold missing");
+  }
+  if (capabilities.truncationLimit == null) {
+    warnings.push("truncation limit missing");
+  }
+  if (model.model_provider === "openai") {
+    warnings.push("custom catalog row uses the official openai provider");
+  }
+  return {
+    index,
+    slug: model.slug || null,
+    model: model.model || null,
+    provider: model.model_provider || null,
+    displayName: model.display_name || null,
+    providerDisplayName: model.provider_display_name || null,
+    source: model.source || null,
+    capabilities,
+    warnings,
+  };
+}
+
+function inspectCatalog(catalog, source) {
+  const validation = validateCatalog(catalog, source);
+  const models = Array.isArray(catalog.models)
+    ? catalog.models.filter((model) => model && typeof model === "object" && !Array.isArray(model)).map(modelCapabilityReport)
+    : [];
+  const warnings = [
+    ...validation.warnings,
+    ...models.flatMap((model) => model.warnings.map((warning) => `${model.providerDisplayName || model.provider || `model[${model.index}]`} / ${model.displayName || model.slug || model.model || "unknown"}: ${warning}`)),
+  ];
+  return {
+    ok: validation.ok,
+    catalog: source,
+    validation,
+    models,
+    warnings,
+    errors: validation.errors,
+  };
+}
+
+function yesNo(value) {
+  return value ? "yes" : "no";
+}
+
+function formatNumber(value) {
+  return value == null ? "-" : String(value);
+}
+
+function formatInspectText(report) {
+  const lines = [];
+  lines.push(`${report.ok ? "ok" : "failed"}: ${report.catalog}`);
+  lines.push(`models: ${report.models.length}`);
+  if (report.models.length > 0) {
+    lines.push("");
+    lines.push("Provider | Model | Slug | Route | Tools | Image | Reasoning | Streaming | Context | Auto-compact | Truncation");
+    lines.push("---|---|---|---|---|---|---|---|---|---|---");
+    for (const model of report.models) {
+      const caps = model.capabilities;
+      lines.push([
+        model.providerDisplayName || "-",
+        model.displayName || "-",
+        model.slug || "-",
+        model.provider || "-",
+        yesNo(caps.supportsTools),
+        yesNo(caps.imageInput),
+        yesNo(caps.supportsReasoning),
+        yesNo(caps.supportsStreaming),
+        formatNumber(caps.contextWindow || caps.maxContextWindow),
+        formatNumber(caps.autoCompactTokenLimit),
+        formatNumber(caps.truncationLimit),
+      ].join(" | "));
+    }
+  }
+  for (const warning of report.warnings) {
+    lines.push(`warning: ${warning}`);
+  }
+  for (const error of report.errors) {
+    lines.push(`error: ${error}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 function writeCatalog(catalogPath, catalog) {
   fs.mkdirSync(path.dirname(catalogPath), { recursive: true, mode: 0o700 });
   const tempPath = `${catalogPath}.${process.pid}.tmp`;
@@ -445,6 +582,16 @@ function run(argv, io = {}) {
       return 0;
     }
     const options = validateOptions(parsed);
+    if (options.command === "inspect") {
+      const catalog = readExistingCatalog(options.catalog);
+      const report = inspectCatalog(catalog, options.catalog);
+      if (options.json) {
+        stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+      } else {
+        stdout.write(formatInspectText(report));
+      }
+      return report.ok ? 0 : 1;
+    }
     const catalog = readCatalog(options.catalog);
     const merged = mergeCatalog(catalog, options);
     const validation = validateMergedCatalog(merged, options.catalog);
@@ -472,6 +619,7 @@ if (require.main === module) {
 module.exports = {
   configSnippet,
   defaultCatalogPath,
+  inspectCatalog,
   mergeCatalog,
   parseArgs,
   run,

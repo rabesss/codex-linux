@@ -109,6 +109,17 @@ The helper prints the `[model_providers.<id>]` TOML snippet that belongs in
 Codex config, keeps the global default on `openai`, and writes only
 provider/model metadata to the catalog.
 
+Inspect the catalog and per-model capability visibility before restarting
+Desktop:
+
+```bash
+node scripts/custom-model-catalog-setup.js inspect --catalog "$CODEX_HOME/custom-models.json"
+```
+
+The `inspect` command is read-only. It validates the catalog and reports each
+custom row's picker label, provider route, context, compaction, truncation, and
+capability warnings without writing secrets or changing `~/.codex/config.toml`.
+
 Run the workstation policy after changing this feature:
 
 ```bash

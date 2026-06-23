@@ -126,15 +126,25 @@ models.
    change `~/.codex/config.toml`. Use `--dry-run` to validate and print the
    snippet without writing.
 
-   Validate a catalog before restarting Desktop:
+   Inspect the catalog before restarting Desktop:
+
+   ```bash
+   node scripts/custom-model-catalog-setup.js inspect --catalog "$CODEX_HOME/custom-models.json"
+   ```
+
+   `inspect` is read-only. It validates the provider-aware catalog contract and
+   prints each model's picker label, provider route, context, compaction,
+   truncation, and capability warnings without writing secrets, updating the
+   catalog, or mutating `~/.codex/config.toml`.
+
+   For validation-only scripts and CI:
 
    ```bash
    node scripts/validate-custom-model-catalog.js "$CODEX_HOME/custom-models.json"
    ```
 
-   The validator checks the provider-aware catalog contract, duplicate visible
-   rows, unsupported modalities, malformed context metadata, and plaintext
-   credential-shaped fields.
+   The validator checks duplicate visible rows, unsupported modalities,
+   malformed context metadata, and plaintext credential-shaped fields.
 
 4. Keep a durable, non-default provider entry for each provider used by saved
    custom threads. For direct providers, use `env_key`, `env_http_headers`, or

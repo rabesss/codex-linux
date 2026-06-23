@@ -162,6 +162,192 @@ test("dry-run validates and prints config without writing a catalog", () => {
   }
 });
 
+test("inspect prints a provider capability matrix and warnings", () => {
+  const root = tempDir();
+  try {
+    const catalogPath = path.join(root, "custom-models.json");
+    const created = captureRun(validArgs(catalogPath));
+    assert.equal(created.code, 0, created.stderr);
+
+    const catalog = JSON.parse(fs.readFileSync(catalogPath, "utf8"));
+    catalog.models.push({
+      slug: "local-small",
+      model: "local-small",
+      model_provider: "local",
+      display_name: "Local Small",
+      provider_display_name: "Local",
+      input_modalities: ["text"],
+      supports_tools: false,
+      supports_streaming: false,
+    });
+    catalog.providers.local = {
+      name: "Local",
+      base_url: "http://127.0.0.1:1234/v1",
+      wire_api: "responses",
+    };
+    fs.writeFileSync(catalogPath, `${JSON.stringify(catalog, null, 2)}\n`, "utf8");
+    const before = fs.statSync(catalogPath).mtimeMs;
+
+    const result = captureRun(["inspect", "--catalog", catalogPath]);
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /ok:/);
+    assert.match(result.stdout, /Provider \| Model \| Slug \| Route \| Tools \| Image/);
+    assert.match(result.stdout, /OpenRouter \| Qwen3 Coder \| openrouter-qwen3-coder \| openrouter \| yes \| no \| yes \| yes \| 262144 \| 210000 \| 64000/);
+    assert.match(result.stdout, /Local \| Local Small \| local-small \| local \| no \| no \| no \| no \| - \| - \| -/);
+    assert.match(result.stdout, /warning: Local \/ Local Small: Browser\/MCP\/Computer Use tools not advertised/);
+    assert.match(result.stdout, /warning: Local \/ Local Small: context window metadata missing/);
+    assert.equal(fs.statSync(catalogPath).mtimeMs, before);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("inspect --json reports structured capability metadata", () => {
+  const root = tempDir();
+  try {
+    const catalogPath = path.join(root, "custom-models.json");
+    const created = captureRun(validArgs(catalogPath));
+    assert.equal(created.code, 0, created.stderr);
+
+    const result = captureRun(["inspect", "--catalog", catalogPath, "--json"]);
+    assert.equal(result.code, 0, result.stderr);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.ok, true);
+    assert.equal(report.catalog, catalogPath);
+    assert.equal(report.models.length, 1);
+    assert.deepEqual(report.models[0].capabilities.inputModalities, ["text"]);
+    assert.equal(report.models[0].capabilities.supportsTools, true);
+    assert.equal(report.models[0].capabilities.supportsReasoning, true);
+    assert.equal(report.models[0].capabilities.supportsStreaming, true);
+    assert.equal(report.models[0].capabilities.contextWindow, 262144);
+    assert.equal(report.models[0].capabilities.autoCompactTokenLimit, 210000);
+    assert.equal(report.models[0].capabilities.truncationLimit, 64000);
+    assert.deepEqual(report.errors, []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("inspect reports validator warnings without failing", () => {
+  const root = tempDir();
+  try {
+    const catalogPath = path.join(root, "custom-models.json");
+    fs.writeFileSync(
+      catalogPath,
+      JSON.stringify({
+        version: 1,
+        models: [
+          {
+            slug: "external-qwen",
+            model: "qwen/qwen3-coder",
+            model_provider: "external",
+            display_name: "Qwen3 Coder",
+            provider_display_name: "External",
+            input_modalities: ["text", "image"],
+            supports_tools: true,
+            context_window: 262144,
+            auto_compact_token_limit: 210000,
+            truncation_policy: { mode: "tokens", limit: 64000 },
+          },
+        ],
+      }, null, 2),
+      "utf8",
+    );
+
+    const result = captureRun(["inspect", "--catalog", catalogPath]);
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /warning: .*model_provider: "external" is not declared/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("inspect returns validation errors without rewriting a catalog", () => {
+  const root = tempDir();
+  try {
+    const catalogPath = path.join(root, "custom-models.json");
+    fs.writeFileSync(
+      catalogPath,
+      JSON.stringify({
+        version: 1,
+        providers: {
+          openrouter: {
+            name: "OpenRouter",
+            base_url: "https://openrouter.ai/api/v1",
+            wire_api: "responses",
+            env_key: "OPENROUTER_API_KEY",
+          },
+        },
+        models: [
+          {
+            slug: "one",
+            model: "qwen/qwen3-coder",
+            model_provider: "openrouter",
+            display_name: "Qwen3 Coder",
+            provider_display_name: "OpenRouter",
+          },
+          {
+            slug: "two",
+            model: "qwen/qwen3-coder",
+            model_provider: "openrouter",
+            display_name: "Qwen3 Coder",
+            provider_display_name: "OpenRouter",
+          },
+        ],
+      }, null, 2),
+      "utf8",
+    );
+    const before = fs.readFileSync(catalogPath, "utf8");
+
+    const result = captureRun(["inspect", "--catalog", catalogPath]);
+    assert.equal(result.code, 1);
+    assert.match(result.stdout, /failed:/);
+    assert.match(result.stdout, /duplicate visible row/);
+    assert.equal(fs.readFileSync(catalogPath, "utf8"), before);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("inspect does not create a missing catalog", () => {
+  const root = tempDir();
+  try {
+    const catalogPath = path.join(root, "missing-custom-models.json");
+    const result = captureRun(["inspect", "--catalog", catalogPath]);
+
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /catalog does not exist/);
+    assert.equal(fs.existsSync(catalogPath), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("inspect does not resolve or print environment secret values", () => {
+  const root = tempDir();
+  const previousKey = process.env.OPENROUTER_API_KEY;
+  try {
+    process.env.OPENROUTER_API_KEY = "sk-testsecretvaluethatmustnotprint";
+    const catalogPath = path.join(root, "custom-models.json");
+    const created = captureRun(validArgs(catalogPath));
+    assert.equal(created.code, 0, created.stderr);
+
+    const result = captureRun(["inspect", "--catalog", catalogPath, "--json"]);
+    assert.equal(result.code, 0, result.stderr);
+    assert.doesNotMatch(result.stdout, /sk-testsecretvaluethatmustnotprint/);
+    assert.doesNotMatch(result.stderr, /sk-testsecretvaluethatmustnotprint/);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.models[0].provider, "openrouter");
+  } finally {
+    if (previousKey == null) {
+      delete process.env.OPENROUTER_API_KEY;
+    } else {
+      process.env.OPENROUTER_API_KEY = previousKey;
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("add-direct rejects credential-shaped static headers", () => {
   const root = tempDir();
   try {

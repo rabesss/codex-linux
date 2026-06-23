@@ -225,6 +225,16 @@ The helper writes catalog metadata to `$CODEX_HOME/custom-models.json` by
 default, prints a `[model_providers.<id>]` snippet for the user config, and
 leaves the global `model_provider` on `openai`.
 
+Before restarting Desktop, inspect the active catalog:
+
+```bash
+node scripts/custom-model-catalog-setup.js inspect --catalog "$CODEX_HOME/custom-models.json"
+```
+
+`inspect` is read-only. It validates the catalog and reports each custom row's
+picker label, provider route, context, compaction, truncation, and capability
+warnings without writing secrets or changing `~/.codex/config.toml`.
+
 The custom-model picker uses route-neutral model names. For example, a
 CLIProxyAPI route can display `Step 3.7 Flash:free` while the tooltip/provider
 metadata carries `CLIProxyAPI / Nous Portal`. Internal slugs may still include
