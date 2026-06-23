@@ -4,10 +4,12 @@
 const assert = require("node:assert/strict");
 const childProcess = require("node:child_process");
 const fs = require("node:fs");
+const http = require("node:http");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const { promisify } = require("node:util");
 const vm = require("node:vm");
 const {
   applyExtractedAppPatchDescriptors,
@@ -18,7 +20,6 @@ const {
   loadLinuxFeaturePatchDescriptors,
 } = require("../../scripts/lib/linux-features.js");
 const {
-  CUSTOM_MODEL_CATALOG_ORIGIN,
   MODEL_QUERY_SHIM_HELPER_SOURCE,
   MODEL_QUERY_SHIM_PATCH,
   MODEL_TOOLTIP_HELPER_SOURCE,
@@ -36,7 +37,6 @@ const {
   applyCustomModelTurnStartRoutingPatch,
   applyCustomModelResumeDynamicToolsPatch,
   applyCustomModelResumeDynamicToolsPayloadPatch,
-  applyCustomModelCatalogCspHtmlPatch,
   applyCustomModelAttachmentMenuPatch,
   applyCustomModelComposerAttachmentPropPatch,
   applyCustomModelListMergePatch,
@@ -47,6 +47,8 @@ const {
   applyCustomModelTooltipPatch,
   descriptors,
 } = require("./patch.js");
+
+const execFile = promisify(childProcess.execFile);
 
 function applyPatchTwice(patchFn, source) {
   const patched = patchFn(source);
@@ -121,6 +123,29 @@ async function waitForHttpJson(url) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw lastError;
+}
+
+async function startCatalogServer(catalog) {
+  const server = http.createServer((request, response) => {
+    if (request.url !== "/api/models") {
+      response.writeHead(404);
+      response.end();
+      return;
+    }
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify(catalog));
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.notEqual(address, null);
+  return {
+    url: `http://127.0.0.1:${address.port}/api/models`,
+    close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+  };
 }
 
 function attachmentMenuBundleFixture() {
@@ -332,7 +357,7 @@ test("feature CLI wrapper injects a merged model catalog only for app-server", (
   }
 });
 
-test("feature CLI wrapper merges default user and shim catalog sources", () => {
+test("feature CLI wrapper merges default user and shim catalog sources", async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-custom-model-default-sources-"));
   try {
     const realCodex = path.join(tempDir, "real-codex");
@@ -385,7 +410,7 @@ test("feature CLI wrapper merges default user and shim catalog sources", () => {
     delete env.CODEX_CUSTOM_MODEL_CATALOG_JSON;
     delete env.CODEX_SHIM_MODEL_CATALOG_JSON;
     delete env.CODEX_CUSTOM_MODEL_OFFICIAL_CACHE_JSON;
-    const output = childProcess.execFileSync("bash", [path.join(__dirname, "codex-cli-wrapper"), "app-server"], {
+    const { stdout: output } = await execFile("bash", [path.join(__dirname, "codex-cli-wrapper"), "app-server"], {
       encoding: "utf8",
       env,
     });
@@ -405,6 +430,63 @@ test("feature CLI wrapper merges default user and shim catalog sources", () => {
     assert.equal(merged.providers.local_lab.name, "Local Lab");
     assert.equal(merged.providers.codex_shim.name, "Codex Shim");
   } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("feature CLI wrapper merges configured loopback catalog URL sources", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-custom-model-url-source-"));
+  const catalogServer = await startCatalogServer({
+    providers: { openrouter: { name: "OpenRouter", base_url: "https://openrouter.ai/api/v1" } },
+    models: [{ slug: "openrouter-url-model", model_provider: "openrouter", display_name: "URL Model" }],
+  });
+  try {
+    const realCodex = path.join(tempDir, "real-codex");
+    const codexHome = path.join(tempDir, "codex-home");
+    const configHome = path.join(tempDir, "config-home");
+    const stateHome = path.join(tempDir, "state-home");
+    const appStateDir = path.join(tempDir, "app-state");
+    fs.mkdirSync(codexHome, { recursive: true });
+    fs.mkdirSync(configHome, { recursive: true });
+    fs.mkdirSync(stateHome, { recursive: true });
+    writeExecutable(realCodex, ["#!/usr/bin/env bash", "set -euo pipefail", "printf '%s\\n' \"$@\""].join("\n"));
+    fs.writeFileSync(
+      path.join(codexHome, "models_cache.json"),
+      JSON.stringify({
+        models: [{ slug: "gpt-5.5", display_name: "GPT-5.5", context_window: 272000 }],
+      }),
+    );
+
+    const env = {
+      ...process.env,
+      CODEX_HOME: codexHome,
+      XDG_CONFIG_HOME: configHome,
+      XDG_STATE_HOME: stateHome,
+      CODEX_LINUX_APP_STATE_DIR: appStateDir,
+      CODEX_CUSTOM_MODEL_CATALOG_URLS: `http://[::1\n${catalogServer.url}`,
+      CODEX_LINUX_FEATURE_WRAPPED_CODEX_CLI: realCodex,
+      HTTP_PROXY: "http://127.0.0.1:9",
+      http_proxy: "http://127.0.0.1:9",
+      ALL_PROXY: "http://127.0.0.1:9",
+    };
+    delete env.CODEX_CUSTOM_MODEL_CATALOG_JSON;
+    delete env.CODEX_SHIM_MODEL_CATALOG_JSON;
+    delete env.CODEX_SHIM_MODEL_CATALOG_URL;
+    delete env.CODEX_CUSTOM_MODEL_OFFICIAL_CACHE_JSON;
+    const { stdout: output } = await execFile("bash", [path.join(__dirname, "codex-cli-wrapper"), "app-server"], {
+      encoding: "utf8",
+      env,
+    });
+    const args = output.trim().split("\n");
+    const catalogPath = JSON.parse(args[1].slice("model_catalog_json=".length));
+    const merged = JSON.parse(fs.readFileSync(catalogPath, "utf8"));
+    assert.deepEqual(
+      merged.models.map((model) => `${model.slug}:${model.model_provider}`).sort(),
+      ["gpt-5.5:openai", "openrouter-url-model:openrouter"],
+    );
+    assert.equal(merged.providers.openrouter.name, "OpenRouter");
+  } finally {
+    await catalogServer.close();
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
@@ -471,6 +553,55 @@ test("webview catalog route merges default user and shim catalog sources", async
       serverProcess.kill();
       await new Promise((resolve) => serverProcess.once("exit", resolve));
     }
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("webview catalog route merges configured loopback catalog URL sources", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-custom-model-webview-url-source-"));
+  const port = await reserveTcpPort();
+  const catalogServer = await startCatalogServer({
+    providers: { local_lab: { name: "Local Lab", base_url: "http://127.0.0.1:11434/v1" } },
+    models: [{ slug: "local-url-model", model_provider: "local_lab", display_name: "Local URL Model" }],
+  });
+  let serverProcess;
+  try {
+    const codexHome = path.join(tempDir, "codex-home");
+    const configHome = path.join(tempDir, "config-home");
+    const stateHome = path.join(tempDir, "state-home");
+    fs.mkdirSync(codexHome, { recursive: true });
+    fs.mkdirSync(configHome, { recursive: true });
+    fs.mkdirSync(stateHome, { recursive: true });
+
+    const env = {
+      ...process.env,
+      CODEX_HOME: codexHome,
+      XDG_CONFIG_HOME: configHome,
+      XDG_STATE_HOME: stateHome,
+      CODEX_CUSTOM_MODEL_CATALOG_URLS: `http://[::1\n${catalogServer.url}`,
+      HTTP_PROXY: "http://127.0.0.1:9",
+      http_proxy: "http://127.0.0.1:9",
+      ALL_PROXY: "http://127.0.0.1:9",
+    };
+    delete env.CODEX_CUSTOM_MODEL_CATALOG_JSON;
+    delete env.CODEX_SHIM_MODEL_CATALOG_JSON;
+    delete env.CODEX_SHIM_MODEL_CATALOG_URL;
+    serverProcess = childProcess.spawn("python3", [path.join(__dirname, "..", "..", "launcher", "webview-server.py"), String(port), "--bind", "127.0.0.1"], {
+      env,
+      stdio: "ignore",
+    });
+    const catalog = await waitForHttpJson(`http://127.0.0.1:${port}/codex-linux/custom-model-catalog.json`);
+    assert.deepEqual(
+      catalog.models.map((model) => `${model.slug}:${model.model_provider}`),
+      ["local-url-model:local_lab"],
+    );
+    assert.equal(catalog.providers.local_lab.name, "Local Lab");
+  } finally {
+    if (serverProcess) {
+      serverProcess.kill();
+      await new Promise((resolve) => serverProcess.once("exit", resolve));
+    }
+    await catalogServer.close();
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
@@ -747,11 +878,10 @@ test("model query patch preserves explicit providers from shared catalog rows", 
 });
 
 test("model query patch registers provider metadata for app-server supplied custom rows", async () => {
+  const fetchedUrls = [];
   const sandbox = {
     fetch: async (url) => {
-      if (url === "http://127.0.0.1:8765/api/models") {
-        return { ok: false, json: async () => ({}) };
-      }
+      fetchedUrls.push(url);
       return {
         ok: true,
         json: async () => ({
@@ -788,6 +918,7 @@ test("model query patch registers provider metadata for app-server supplied cust
     sandbox,
   );
 
+  assert.deepEqual(fetchedUrls, ["/codex-linux/custom-model-catalog.json"]);
   assert.equal(sandbox.result.data.length, 1);
   assert.equal(sandbox.result.data[0].model, "openrouter-qwen3-coder");
   assert.equal(sandbox.__codexLinuxCustomModelSlugs.has("openrouter-qwen3-coder"), true);
@@ -1617,31 +1748,6 @@ test("attachment menu patch supports the Electron 42 integrated composer menu", 
   );
 });
 
-test("webview CSP patch allows the Desktop renderer to fetch the local shim catalog", () => {
-  const plainSource = [
-    "<!doctype html><html><head>",
-    "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; connect-src 'self' https://ab.chatgpt.com https://cdn.openai.com;\">",
-    "</head></html>",
-  ].join("");
-  const encodedSource = [
-    "<!doctype html><html><head>",
-    "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src &#39;none&#39;; connect-src &#39;self&#39; https://ab.chatgpt.com https://cdn.openai.com;\">",
-    "</head></html>",
-  ].join("");
-  const patched = applyPatchTwice(applyCustomModelCatalogCspHtmlPatch, plainSource);
-  const encodedPatched = applyPatchTwice(applyCustomModelCatalogCspHtmlPatch, encodedSource);
-
-  assert.match(patched, new RegExp(`connect-src[^;]*${CUSTOM_MODEL_CATALOG_ORIGIN.replace(/\./gu, "\\.")}`));
-  assert.match(
-    encodedPatched,
-    new RegExp(`connect-src &#39;self&#39;[^;]*${CUSTOM_MODEL_CATALOG_ORIGIN.replace(/\./gu, "\\.")}`),
-  );
-  assert.throws(
-    () => applyCustomModelCatalogCspHtmlPatch("<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none';\">"),
-    /webview connect-src CSP not found/,
-  );
-});
-
 test("feature descriptors are required upstream patch points when enabled", () => {
   assert.deepEqual(
     descriptors.map((descriptor) => [descriptor.id, descriptor.phase, descriptor.ciPolicy]),
@@ -1659,7 +1765,6 @@ test("feature descriptors are required upstream patch points when enabled", () =
       ["model-provider-groups", "webview-asset", "required-upstream"],
       ["composer-attachment-image-affordance-prop", "webview-asset", "required-upstream"],
       ["attachment-menu-image-affordance", "webview-asset", "required-upstream"],
-      ["webview-csp-shim-catalog", "extracted-app", "required-upstream"],
     ],
   );
 
@@ -1688,7 +1793,6 @@ test("feature descriptors are required upstream patch points when enabled", () =
         ["feature:custom-model-catalog:model-provider-groups", "webview-asset", "required-upstream"],
         ["feature:custom-model-catalog:composer-attachment-image-affordance-prop", "webview-asset", "required-upstream"],
         ["feature:custom-model-catalog:attachment-menu-image-affordance", "webview-asset", "required-upstream"],
-        ["feature:custom-model-catalog:webview-csp-shim-catalog", "extracted-app", "required-upstream"],
       ],
     );
   });
@@ -1744,12 +1848,13 @@ test("asset descriptor validation fails when the model picker bundle is missing"
   );
 });
 
-test("extracted app descriptor patches the webview CSP in index.html", () => {
+test("extracted app descriptors do not add a cross-origin shim catalog CSP", () => {
   withExtractedApp({}, (extractedDir) => {
     const indexPath = path.join(extractedDir, "webview", "index.html");
+    const source = "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; connect-src 'self' https://ab.chatgpt.com https://cdn.openai.com;\">";
     fs.writeFileSync(
       indexPath,
-      "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; connect-src 'self' https://ab.chatgpt.com https://cdn.openai.com;\">",
+      source,
     );
     const report = { patches: [] };
 
@@ -1760,10 +1865,8 @@ test("extracted app descriptor patches the webview CSP in index.html", () => {
       report,
     );
 
-    assert.deepEqual(report.patches.map((patch) => [patch.name, patch.status]), [
-      ["webview-csp-shim-catalog", "applied"],
-    ]);
-    assert.match(fs.readFileSync(indexPath, "utf8"), new RegExp(CUSTOM_MODEL_CATALOG_ORIGIN.replace(/\./gu, "\\.")));
+    assert.deepEqual(report.patches.map((patch) => [patch.name, patch.status]), []);
+    assert.equal(fs.readFileSync(indexPath, "utf8"), source);
   });
 });
 

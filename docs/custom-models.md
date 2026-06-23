@@ -77,7 +77,9 @@ for the local Ollama/LM Studio flow.
    - `$XDG_CONFIG_HOME/codex-desktop/custom-models.json`;
    - `CODEX_SHIM_MODEL_CATALOG_JSON`, when set, or the optional shim
      compatibility path at
-     `$XDG_STATE_HOME/codex-shim/custom_model_catalog.json`.
+     `$XDG_STATE_HOME/codex-shim/custom_model_catalog.json`;
+   - optional loopback HTTP sources from `CODEX_CUSTOM_MODEL_CATALOG_URLS`
+     and `CODEX_SHIM_MODEL_CATALOG_URL`.
 
    Examples live under
    [`docs/examples/custom-model-catalog`](examples/custom-model-catalog/):
@@ -260,11 +262,12 @@ merged catalog from Codex's cached official models plus the custom catalog, then
 starts app-server with `-c model_catalog_json=<merged>`. If either catalog is
 missing, the wrapper passes through without injecting a static catalog so
 official model metadata is not replaced by a custom-only list.
-The renderer also reads the configured custom catalog from the Desktop webview
+The renderer reads the configured custom catalog from the Desktop webview
 server at `/codex-linux/custom-model-catalog.json` so provider ids and provider
 configs remain available even when app-server has already supplied the visible
-custom model row. The legacy shim endpoint `http://127.0.0.1:8765/api/models`
-is still queried as an optional additional source.
+custom model row. The renderer does not query the shim directly. If a shim or
+another local adapter should be queried live, provide its loopback catalog URL
+through `CODEX_CUSTOM_MODEL_CATALOG_URLS` or `CODEX_SHIM_MODEL_CATALOG_URL`.
 
 This is required: picker metadata alone does not change runtime context
 accounting or compaction behavior. The important fields are:
@@ -337,20 +340,20 @@ Then verify through Desktop:
 
 ## Current Constraints
 
-- Custom rows are unavailable when none of the configured, user, or optional
-  shim catalog paths are readable.
+- Custom rows are unavailable when none of the configured, user, optional
+  shim, or configured loopback URL catalog sources are readable.
 - If custom rows show `CLIProxyAPI / Cursor ...` as the primary model label,
   update `codex-shim`, regenerate the Desktop catalog, restart the shim
   service, and restart Desktop. Current shim builds reserve that information
   for provider metadata and keep primary labels route-neutral.
 - If the same custom model appears twice under the same provider, update both
-  repositories and inspect `/api/models` for duplicate
+  repositories and inspect the active catalog source for duplicate
   `(provider_display_name, display_name)` rows. Current shim builds collapse
   those duplicates before Desktop merges the catalog.
 - If grouping is wrong, inspect the row's `provider_display_name` in the custom
-  catalog or shim `/api/models`; Desktop groups from that field and falls back
-  to the generated `<display_name> via <provider_display_name>.` description
-  when the renderer receives normalized rows.
+  catalog; Desktop groups from that field and falls back to the generated
+  `<display_name> via <provider_display_name>.` description when the renderer
+  receives normalized rows.
 - Saved custom threads need the durable `[model_providers.<id>]` definition
   for the selected row after restart even though new-thread routing is
   session-scoped.

@@ -3,7 +3,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const CUSTOM_MODEL_CATALOG_ORIGIN = "http://127.0.0.1:8765";
 const MODEL_PICKER_VARIANTS = [
   {
     name: "current model query filter",
@@ -30,7 +29,7 @@ const MODEL_QUERY_SHIM_HELPER_SOURCE = [
   "function codexLinuxCustomModelReasoning(e){let t=codexLinuxCustomModelArray(e).map(e=>({reasoningEffort:codexLinuxCustomModelString(e.reasoningEffort??e.effort)??`medium`,description:codexLinuxCustomModelString(e.description)??``}));return t.length>0?t:[{reasoningEffort:`medium`,description:`Balanced speed and reasoning`}]}",
   "function codexLinuxCustomModelRuntimeConfig(e){let t={},n=codexLinuxCustomModelPositiveInt(e.contextWindow??e.context_window??e.maxContextWindow??e.max_context_window);n!=null&&(t.model_context_window=n);let r=codexLinuxCustomModelPositiveInt(e.autoCompactTokenLimit??e.auto_compact_token_limit);r!=null&&(t.model_auto_compact_token_limit=r);let i=e.truncationPolicy??e.truncation_policy;i&&typeof i==`object`&&!Array.isArray(i)&&(t.truncation_policy=i);return t}",
   "function codexLinuxCustomModelToRow(e,t){let n=codexLinuxCustomModelString(e.slug);if(!n)return null;let r=codexLinuxCustomModelArray(e.input_modalities??e.inputModalities);r.length||(r=[`text`]);let i=codexLinuxCustomModelString(e.model_provider??e.modelProvider),a=i??`codex_shim`,o=codexLinuxCustomModelString(e.provider_display_name??e.providerDisplayName??e.provider_name??e.providerName)??codexLinuxCustomModelString(t?.get(a)?.name)??codexLinuxCustomModelString(e.provider??e.owned_by??e.ownedBy)??a,s=codexLinuxCustomModelString(e.display_name??e.displayName??e.name??n)??n,c=codexLinuxCustomModelString(e.description)??`${s} via ${o}.`,l=codexLinuxCustomModelString(e.upstream_model_id??e.upstreamModelId??e.model??n)??n,u=codexLinuxCustomModelString(e.source)??(a===`codex_shim`?`CLIProxyAPI/local adapter`:`custom catalog`),d=codexLinuxCustomModelString(e.context_window??e.max_context_window??e.contextWindow??e.maxContextWindow),f=codexLinuxCustomModelString(e.model_catalog_json??e.modelCatalogJson),p=e.auto_compact_token_limit??e.autoCompactTokenLimit??null,m=e.truncation_policy??e.truncationPolicy??null;return{model:n,displayName:s,description:c,hidden:!1,isDefault:!1,modelProvider:a,model_provider:a,explicitModelProvider:i!=null,owned_by:codexLinuxCustomModelString(e.owned_by??e.ownedBy)??a,provider:a,providerDisplayName:o,upstreamModelId:l,source:u,contextWindow:d,modelCatalogJson:f,autoCompactTokenLimit:p,truncationPolicy:m,inputModalities:r,supportedReasoningEfforts:codexLinuxCustomModelReasoning(e.supported_reasoning_efforts??e.supportedReasoningEfforts??e.supported_reasoning_levels),defaultReasoningEffort:codexLinuxCustomModelString(e.default_reasoning_effort??e.defaultReasoningEffort??e.default_reasoning_level)??`medium`,supportsTools:e.supports_tools===!0||e.supportsTools===!0,supportsReasoning:e.supports_reasoning===!0||e.supportsReasoning===!0,supportsStreaming:e.supports_streaming!==!1&&e.supportsStreaming!==!1,supportsImageInputs:r.includes(`image`),supportsImageDetailOriginal:e.supports_image_detail_original===!0||e.supportsImageDetailOriginal===!0}}",
-  "async function codexLinuxCustomModelFetchCatalogs(){let e=[`/codex-linux/custom-model-catalog.json`,`http://127.0.0.1:8765/api/models`],t=[];for(let n of e)try{let e=await fetch(n,{cache:`no-store`});e.ok&&t.push(await e.json())}catch{}return t}",
+  "async function codexLinuxCustomModelFetchCatalogs(){try{let e=await fetch(`/codex-linux/custom-model-catalog.json`,{cache:`no-store`});return e.ok?[await e.json()]:[]}catch{return[]}}",
   "async function codexLinuxCustomModelMergeListModels(e){try{let t=await codexLinuxCustomModelFetchCatalogs(),n=codexLinuxCustomModelMergeProviderConfigs(t),r=t.flatMap(e=>codexLinuxCustomModelCatalogRows(e)).map(e=>codexLinuxCustomModelToRow(e,n)).filter(Boolean),i=e&&typeof e==`object`?e:{data:[]},a=codexLinuxCustomModelArray(i.data),o=e=>typeof e==`string`?e.trim().toLowerCase():``,s=new Set(a.flatMap(e=>[o(e?.model),o(e?.id)]).filter(Boolean)),c=new Map,l=new Set;for(let e of r){let t=o(e.model),n=`${e.providerDisplayName}\\0${e.displayName}`;if(!t||l.has(n))continue;l.add(n);if(s.has(t)&&!e.explicitModelProvider&&!codexLinuxCustomModelLegacyCatalogSlug(t))continue;c.has(t)||c.set(t,e)}let u=new Set,d=[...c.values()].filter(e=>{let t=`${e.providerDisplayName}\\0${e.displayName}`;return!s.has(o(e.model))&&!u.has(t)&&(u.add(t),!0)}),f=[...c.values()];globalThis.__codexLinuxCustomModelSlugs=new Set(f.map(e=>o(e.model))),globalThis.__codexLinuxCustomModelCatalogPaths=new Map(f.flatMap(e=>e.modelCatalogJson==null?[]:[[o(e.model),e.modelCatalogJson]])),globalThis.__codexLinuxCustomModelRuntimeConfig=new Map(f.flatMap(e=>{let t=codexLinuxCustomModelRuntimeConfig(e);return Object.keys(t).length===0?[]:[[o(e.model),t]]})),globalThis.__codexLinuxCustomModelProviders=new Map(f.map(e=>[o(e.model),e.modelProvider])),globalThis.__codexLinuxCustomModelProviderConfigs=new Map([...n].filter(([e])=>f.some(t=>t.modelProvider===e)));return{...i,data:[...a,...d]}}catch{return e}}",
 ].join("");
 const MODEL_QUERY_SHIM_INSERTION = "var x=100,S=[`models`,`list`];";
@@ -287,37 +286,6 @@ const ATTACHMENT_MENU_2026_06_13_VARIANTS = {
       "let q;true||t[38]!==r||t[39]!==h||t[40]!==i||t[41]!==o||t[42]!==c||t[43]!==f||t[44]!==g||t[45]!==_||t[46]!==v||t[47]!==x?(q=codexLinuxCustomModelCanAddImages&&x&&h!=null?",
   },
 };
-
-function applyCustomModelCatalogCspHtmlPatch(source) {
-  const connectMatch = source.match(/connect-src\s+((?:&[#A-Za-z0-9]+;|[^;"<])*)(;)/u);
-  if (connectMatch == null) {
-    throw new Error("Required custom model catalog patch failed: webview connect-src CSP not found");
-  }
-
-  const values = connectMatch[1].trim().split(/\s+/u).filter(Boolean);
-  if (values.includes(CUSTOM_MODEL_CATALOG_ORIGIN)) {
-    return source;
-  }
-
-  return source.replace(
-    connectMatch[0],
-    `connect-src ${[...values, CUSTOM_MODEL_CATALOG_ORIGIN].join(" ")}${connectMatch[2]}`,
-  );
-}
-
-function applyCustomModelCatalogCspPatch(extractedDir) {
-  const indexPath = path.join(extractedDir, "webview", "index.html");
-  if (!fs.existsSync(indexPath)) {
-    throw new Error("Required custom model catalog patch failed: webview index.html not found");
-  }
-
-  const source = fs.readFileSync(indexPath, "utf8");
-  const patched = applyCustomModelCatalogCspHtmlPatch(source);
-  if (patched !== source) {
-    fs.writeFileSync(indexPath, patched, "utf8");
-  }
-  return { changed: patched !== source };
-}
 
 function applyCustomModelPickerVisibilityPatch(source) {
   for (const variant of MODEL_PICKER_VARIANTS) {
@@ -1007,17 +975,9 @@ const descriptors = [
     missingDescription: "composer attachment menu bundle",
     apply: applyCustomModelAttachmentMenuPatch,
   },
-  {
-    id: "webview-csp-shim-catalog",
-    phase: "extracted-app",
-    order: 19_050,
-    ciPolicy: "required-upstream",
-    apply: applyCustomModelCatalogCspPatch,
-  },
 ];
 
 module.exports = {
-  CUSTOM_MODEL_CATALOG_ORIGIN,
   MODEL_PICKER_VARIANTS,
   MODEL_QUERY_SHIM_HELPER_SOURCE,
   MODEL_QUERY_SHIM_PATCH,
@@ -1037,8 +997,6 @@ module.exports = {
   applyCustomModelTurnStartRoutingPatch,
   applyCustomModelResumeDynamicToolsPatch,
   applyCustomModelResumeDynamicToolsPayloadPatch,
-  applyCustomModelCatalogCspHtmlPatch,
-  applyCustomModelCatalogCspPatch,
   applyCustomModelAttachmentMenuPatch,
   applyCustomModelComposerAttachmentPropPatch,
   applyCustomModelListMergePatch,

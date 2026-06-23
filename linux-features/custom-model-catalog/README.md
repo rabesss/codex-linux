@@ -52,18 +52,19 @@ rows. With this feature enabled, the Desktop webview reads catalog rows, groups
 them by `provider_display_name`, and expects the catalog source to de-duplicate
 visible `(provider_display_name, display_name)` pairs while preserving
 route-stable slugs for saved threads and overrides.
-The webview reads the same configured, user, and optional shim catalog paths
-through the app's own loopback server at
-`/codex-linux/custom-model-catalog.json`; `http://127.0.0.1:8765/api/models` is
-still queried as an optional live shim compatibility source.
+The webview reads the same configured, user, optional shim catalog paths, and
+explicit loopback HTTP catalog URLs through the app's own loopback server at
+`/codex-linux/custom-model-catalog.json`. The renderer does not query
+`http://127.0.0.1:8765/api/models` directly; live shim compatibility is
+available by setting `CODEX_SHIM_MODEL_CATALOG_URL` or including the URL in
+`CODEX_CUSTOM_MODEL_CATALOG_URLS`.
 
 Required patch points:
 
 - `models-and-reasoning-efforts-*.js`: remove the provider allowlist gate so
   custom rows are visible and group model options by provider metadata.
-- `model-queries-*.js`: merge rows from a shared custom catalog, register
-  provider metadata from app-server-supplied rows, and keep
-  `http://127.0.0.1:8765/api/models` as an optional shim compatibility source.
+- `model-queries-*.js`: merge rows from a shared custom catalog and register
+  provider metadata from app-server-supplied rows.
 - `app-server-manager-signals-*.js`: apply each custom row's provider only for
   custom route slugs at start, fork, and resume; preserve provider/session config during
   `thread/fork`; refresh dynamic tools on resume; force provider resume after

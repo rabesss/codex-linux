@@ -78,8 +78,34 @@ build_merged_catalog() {
 import json
 import os
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 
 official_cache, output_path, *custom_catalog_sources = sys.argv[1:]
+MAX_CUSTOM_MODEL_CATALOG_BYTES = 2 * 1024 * 1024
+CATALOG_URL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+def split_catalog_urls(raw):
+    urls = []
+    for line in raw.replace(",", "\n").splitlines():
+        for item in line.split():
+            if item:
+                urls.append(item)
+    return urls
+
+def loopback_catalog_url(url):
+    try:
+        parts = urllib.parse.urlsplit(url)
+        hostname = parts.hostname
+    except ValueError:
+        return False
+    return (
+        parts.scheme == "http"
+        and hostname in {"127.0.0.1", "localhost", "::1"}
+        and bool(parts.netloc)
+        and bool(parts.path)
+    )
 
 def load_catalog(path):
     if not path or not os.path.exists(path):
@@ -94,6 +120,49 @@ def load_catalog(path):
         providers = {}
     return [model for model in models if isinstance(model, dict) and isinstance(model.get("slug"), str)], providers
 
+def load_catalog_url(url):
+    if not url or not loopback_catalog_url(url):
+        return [], {}
+    try:
+        with CATALOG_URL_OPENER.open(url, timeout=1.0) as response:
+            status = getattr(response, "status", 200)
+            if status != 200:
+                return [], {}
+            payload = response.read(MAX_CUSTOM_MODEL_CATALOG_BYTES + 1)
+    except (OSError, TimeoutError, urllib.error.URLError):
+        return [], {}
+    if len(payload) > MAX_CUSTOM_MODEL_CATALOG_BYTES:
+        return [], {}
+    try:
+        data = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return [], {}
+    models = data.get("models") if isinstance(data, dict) else data
+    providers = data.get("providers") if isinstance(data, dict) else {}
+    if not isinstance(models, list):
+        models = []
+    if not isinstance(providers, dict):
+        providers = {}
+    return [model for model in models if isinstance(model, dict) and isinstance(model.get("slug"), str)], providers
+
+def configured_catalog_urls():
+    candidates = []
+    configured = os.environ.get("CODEX_CUSTOM_MODEL_CATALOG_URLS")
+    if configured:
+        candidates.extend(split_catalog_urls(configured))
+    shim_url = os.environ.get("CODEX_SHIM_MODEL_CATALOG_URL")
+    if shim_url:
+        candidates.append(shim_url)
+    urls = []
+    seen_urls = set()
+    for candidate in candidates:
+        url = candidate.strip()
+        if not url or url in seen_urls or not loopback_catalog_url(url):
+            continue
+        urls.append(url)
+        seen_urls.add(url)
+    return urls
+
 def load_custom_catalogs(paths):
     models = []
     providers = {}
@@ -106,6 +175,11 @@ def load_custom_catalogs(paths):
             continue
         seen_paths.add(resolved)
         catalog_models, catalog_providers = load_catalog(resolved)
+        models.extend(catalog_models)
+        for provider_id, provider in catalog_providers.items():
+            providers.setdefault(provider_id, provider)
+    for url in configured_catalog_urls():
+        catalog_models, catalog_providers = load_catalog_url(url)
         models.extend(catalog_models)
         for provider_id, provider in catalog_providers.items():
             providers.setdefault(provider_id, provider)

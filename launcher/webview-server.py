@@ -8,7 +8,9 @@ import json
 import os
 import signal
 import sys
+import urllib.error
 import urllib.parse
+import urllib.request
 
 
 def _install_parent_death_signal():
@@ -41,6 +43,31 @@ if len(sys.argv) >= 4 and sys.argv[2] == "--bind":
     bind = sys.argv[3]
 
 CUSTOM_MODEL_CATALOG_ROUTE = "/codex-linux/custom-model-catalog.json"
+MAX_CUSTOM_MODEL_CATALOG_BYTES = 2 * 1024 * 1024
+CUSTOM_MODEL_CATALOG_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def _split_catalog_urls(raw):
+    urls = []
+    for line in raw.replace(",", "\n").splitlines():
+        for item in line.split():
+            if item:
+                urls.append(item)
+    return urls
+
+
+def _loopback_catalog_url(url):
+    try:
+        parts = urllib.parse.urlsplit(url)
+        hostname = parts.hostname
+    except ValueError:
+        return False
+    return (
+        parts.scheme == "http"
+        and hostname in {"127.0.0.1", "localhost", "::1"}
+        and bool(parts.netloc)
+        and bool(parts.path)
+    )
 
 
 def _custom_model_catalog_paths():
@@ -74,12 +101,53 @@ def _custom_model_catalog_paths():
     return paths
 
 
+def _custom_model_catalog_urls():
+    candidates = []
+    configured = os.environ.get("CODEX_CUSTOM_MODEL_CATALOG_URLS")
+    if configured:
+        candidates.extend(_split_catalog_urls(configured))
+    shim_url = os.environ.get("CODEX_SHIM_MODEL_CATALOG_URL")
+    if shim_url:
+        candidates.append(shim_url)
+    urls = []
+    seen_urls = set()
+    for candidate in candidates:
+        url = candidate.strip()
+        if not url or url in seen_urls or not _loopback_catalog_url(url):
+            continue
+        urls.append(url)
+        seen_urls.add(url)
+    return urls
+
+
 def _read_custom_model_catalog(path):
     try:
         with open(path, "r", encoding="utf-8") as handle:
             data = json.load(handle)
     except (OSError, json.JSONDecodeError):
         return [], {}
+    return _catalog_models_and_providers(data)
+
+
+def _read_custom_model_catalog_url(url):
+    try:
+        with CUSTOM_MODEL_CATALOG_OPENER.open(url, timeout=1.0) as response:
+            status = getattr(response, "status", 200)
+            if status != 200:
+                return [], {}
+            payload = response.read(MAX_CUSTOM_MODEL_CATALOG_BYTES + 1)
+    except (OSError, TimeoutError, urllib.error.URLError):
+        return [], {}
+    if len(payload) > MAX_CUSTOM_MODEL_CATALOG_BYTES:
+        return [], {}
+    try:
+        data = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return [], {}
+    return _catalog_models_and_providers(data)
+
+
+def _catalog_models_and_providers(data):
     models = data.get("models") if isinstance(data, dict) else data
     providers = data.get("providers") if isinstance(data, dict) else {}
     if not isinstance(models, list):
@@ -102,6 +170,16 @@ def _custom_model_catalog_payload():
     seen_slugs = set()
     for path in _custom_model_catalog_paths():
         catalog_models, catalog_providers = _read_custom_model_catalog(path)
+        for provider_id, provider in catalog_providers.items():
+            providers.setdefault(provider_id, provider)
+        for model in catalog_models:
+            slug = model.get("slug")
+            if slug in seen_slugs:
+                continue
+            models.append(model)
+            seen_slugs.add(slug)
+    for url in _custom_model_catalog_urls():
+        catalog_models, catalog_providers = _read_custom_model_catalog_url(url)
         for provider_id, provider in catalog_providers.items():
             providers.setdefault(provider_id, provider)
         for model in catalog_models:
