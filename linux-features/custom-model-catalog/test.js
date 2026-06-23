@@ -4,6 +4,7 @@
 const assert = require("node:assert/strict");
 const childProcess = require("node:child_process");
 const fs = require("node:fs");
+const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
@@ -91,6 +92,37 @@ function writeExecutable(filePath, body) {
   fs.chmodSync(filePath, 0o755);
 }
 
+async function reserveTcpPort() {
+  const server = net.createServer();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.notEqual(address, null);
+  const port = address.port;
+  await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+  return port;
+}
+
+async function waitForHttpJson(url) {
+  let lastError;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    try {
+      const response = await fetch(url, { cache: "no-store" });
+      if (response.ok) {
+        return await response.json();
+      }
+      lastError = new Error(`HTTP ${response.status}`);
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw lastError;
+}
+
 function attachmentMenuBundleFixture() {
   return [
     "var ht=e(z(),1),gt=(0,Z.memo)(function(e){let t=(0,$.c)(98),{onAddImageDataUrls:n,onAddAppshotContext:r,onAppshotCaptureAnimationDuration:i,onAppshotCaptureSettled:a,onAppshotCaptureStarted:o,getAppshotCaptureAnimationDestinationFrame:s,getAttachmentGen:c,setFileAttachments:l,onAddLocalFileAttachments:u,conversationId:d,executionTargetCwd:h,executionTargetHostId:g,isAutoContextOn:_,setIsAutoContextOn:v,ideContextStatus:b,hasGoal:x,isGoalActionAvailable:S,onClearGoal:C,onOpenGoalEditor:w,supportsFileAttachments:T,supportsRemoteFileAttachments:E,disabled:O}=e,k=T===void 0?!0:T,A=E===void 0?!1:E,j=O===void 0?!1:O,M=f(y),N=ee();",
@@ -153,9 +185,15 @@ test("feature CLI wrapper injects a merged model catalog only for app-server", (
     const realCodex = path.join(tempDir, "real-codex");
     const officialCache = path.join(tempDir, "models_cache.json");
     const customCatalog = path.join(tempDir, "custom_model_catalog.json");
+    const codexHome = path.join(tempDir, "codex-home");
+    const configHome = path.join(tempDir, "config-home");
+    const stateHome = path.join(tempDir, "state-home");
     const appStateDir = path.join(tempDir, "state", "codex-desktop");
     const wrapper = path.join(__dirname, "codex-cli-wrapper");
 
+    fs.mkdirSync(codexHome, { recursive: true });
+    fs.mkdirSync(configHome, { recursive: true });
+    fs.mkdirSync(stateHome, { recursive: true });
     writeExecutable(
       realCodex,
       [
@@ -238,8 +276,12 @@ test("feature CLI wrapper injects a merged model catalog only for app-server", (
       CODEX_LINUX_FEATURE_WRAPPED_CODEX_CLI: realCodex,
       CODEX_CUSTOM_MODEL_OFFICIAL_CACHE_JSON: officialCache,
       CODEX_CUSTOM_MODEL_CATALOG_JSON: customCatalog,
+      CODEX_HOME: codexHome,
+      XDG_CONFIG_HOME: configHome,
+      XDG_STATE_HOME: stateHome,
       CODEX_LINUX_APP_STATE_DIR: appStateDir,
     };
+    delete env.CODEX_SHIM_MODEL_CATALOG_JSON;
     const output = childProcess.execFileSync("bash", [wrapper, "app-server", "--socket", "x"], {
       encoding: "utf8",
       env,
@@ -286,6 +328,149 @@ test("feature CLI wrapper injects a merged model catalog only for app-server", (
     });
     assert.deepEqual(passthroughOutput.trim().split("\n"), ["app-server"]);
   } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("feature CLI wrapper merges default user and shim catalog sources", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-custom-model-default-sources-"));
+  try {
+    const realCodex = path.join(tempDir, "real-codex");
+    const codexHome = path.join(tempDir, "codex-home");
+    const configHome = path.join(tempDir, "config-home");
+    const stateHome = path.join(tempDir, "state-home");
+    const appStateDir = path.join(tempDir, "app-state");
+    const xdgCatalogDir = path.join(configHome, "codex-desktop");
+    const shimCatalogDir = path.join(stateHome, "codex-shim");
+    fs.mkdirSync(codexHome, { recursive: true });
+    fs.mkdirSync(xdgCatalogDir, { recursive: true });
+    fs.mkdirSync(shimCatalogDir, { recursive: true });
+    writeExecutable(realCodex, ["#!/usr/bin/env bash", "set -euo pipefail", "printf '%s\\n' \"$@\""].join("\n"));
+    fs.writeFileSync(
+      path.join(codexHome, "models_cache.json"),
+      JSON.stringify({
+        models: [{ slug: "gpt-5.5", display_name: "GPT-5.5", context_window: 272000 }],
+      }),
+    );
+    fs.writeFileSync(
+      path.join(codexHome, "custom-models.json"),
+      JSON.stringify({
+        providers: { openrouter: { name: "OpenRouter", base_url: "https://openrouter.ai/api/v1" } },
+        models: [{ slug: "openrouter-qwen3-coder", model_provider: "openrouter", display_name: "Qwen3 Coder" }],
+      }),
+    );
+    fs.writeFileSync(
+      path.join(xdgCatalogDir, "custom-models.json"),
+      JSON.stringify({
+        providers: { local_lab: { name: "Local Lab", base_url: "http://127.0.0.1:11434/v1" } },
+        models: [{ slug: "local-qwen", model_provider: "local_lab", display_name: "Local Qwen" }],
+      }),
+    );
+    fs.writeFileSync(
+      path.join(shimCatalogDir, "custom_model_catalog.json"),
+      JSON.stringify({
+        providers: { codex_shim: { name: "Codex Shim", base_url: "http://127.0.0.1:8765/v1" } },
+        models: [{ slug: "shim-auto", model_provider: "codex_shim", display_name: "Auto Router" }],
+      }),
+    );
+
+    const env = {
+      ...process.env,
+      CODEX_HOME: codexHome,
+      XDG_CONFIG_HOME: configHome,
+      XDG_STATE_HOME: stateHome,
+      CODEX_LINUX_APP_STATE_DIR: appStateDir,
+      CODEX_LINUX_FEATURE_WRAPPED_CODEX_CLI: realCodex,
+    };
+    delete env.CODEX_CUSTOM_MODEL_CATALOG_JSON;
+    delete env.CODEX_SHIM_MODEL_CATALOG_JSON;
+    delete env.CODEX_CUSTOM_MODEL_OFFICIAL_CACHE_JSON;
+    const output = childProcess.execFileSync("bash", [path.join(__dirname, "codex-cli-wrapper"), "app-server"], {
+      encoding: "utf8",
+      env,
+    });
+    const args = output.trim().split("\n");
+    const catalogPath = JSON.parse(args[1].slice("model_catalog_json=".length));
+    const merged = JSON.parse(fs.readFileSync(catalogPath, "utf8"));
+    assert.deepEqual(
+      merged.models.map((model) => `${model.slug}:${model.model_provider}`).sort(),
+      [
+        "gpt-5.5:openai",
+        "local-qwen:local_lab",
+        "openrouter-qwen3-coder:openrouter",
+        "shim-auto:codex_shim",
+      ],
+    );
+    assert.equal(merged.providers.openrouter.name, "OpenRouter");
+    assert.equal(merged.providers.local_lab.name, "Local Lab");
+    assert.equal(merged.providers.codex_shim.name, "Codex Shim");
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("webview catalog route merges default user and shim catalog sources", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-custom-model-webview-sources-"));
+  const port = await reserveTcpPort();
+  let serverProcess;
+  try {
+    const codexHome = path.join(tempDir, "codex-home");
+    const configHome = path.join(tempDir, "config-home");
+    const stateHome = path.join(tempDir, "state-home");
+    const xdgCatalogDir = path.join(configHome, "codex-desktop");
+    const shimCatalogDir = path.join(stateHome, "codex-shim");
+    fs.mkdirSync(codexHome, { recursive: true });
+    fs.mkdirSync(xdgCatalogDir, { recursive: true });
+    fs.mkdirSync(shimCatalogDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(codexHome, "custom-models.json"),
+      JSON.stringify({
+        providers: { openrouter: { name: "OpenRouter" } },
+        models: [{ slug: "openrouter-qwen3-coder", model_provider: "openrouter" }],
+      }),
+    );
+    fs.writeFileSync(
+      path.join(xdgCatalogDir, "custom-models.json"),
+      JSON.stringify({
+        providers: { local_lab: { name: "Local Lab" } },
+        models: [{ slug: "local-qwen", model_provider: "local_lab" }],
+      }),
+    );
+    fs.writeFileSync(
+      path.join(shimCatalogDir, "custom_model_catalog.json"),
+      JSON.stringify({
+        providers: { codex_shim: { name: "Codex Shim" } },
+        models: [{ slug: "shim-auto", model_provider: "codex_shim" }],
+      }),
+    );
+
+    const env = {
+      ...process.env,
+      CODEX_HOME: codexHome,
+      XDG_CONFIG_HOME: configHome,
+      XDG_STATE_HOME: stateHome,
+    };
+    delete env.CODEX_CUSTOM_MODEL_CATALOG_JSON;
+    delete env.CODEX_SHIM_MODEL_CATALOG_JSON;
+    serverProcess = childProcess.spawn("python3", [path.join(__dirname, "..", "..", "launcher", "webview-server.py"), String(port), "--bind", "127.0.0.1"], {
+      env,
+      stdio: "ignore",
+    });
+    const catalog = await waitForHttpJson(`http://127.0.0.1:${port}/codex-linux/custom-model-catalog.json`);
+    assert.deepEqual(
+      catalog.models.map((model) => `${model.slug}:${model.model_provider}`).sort(),
+      [
+        "local-qwen:local_lab",
+        "openrouter-qwen3-coder:openrouter",
+        "shim-auto:codex_shim",
+      ],
+    );
+    assert.deepEqual(Object.keys(catalog.providers).sort(), ["codex_shim", "local_lab", "openrouter"]);
+  } finally {
+    if (serverProcess) {
+      serverProcess.kill();
+      await new Promise((resolve) => serverProcess.once("exit", resolve));
+    }
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });

@@ -32,13 +32,15 @@ regenerate the catalog source and restart Desktop.
 Current Codex treats `model_catalog_json` as a startup-only config key, so the
 feature also stages a `codex-cli-wrapper` resource. The launcher activates that
 wrapper only for the Desktop-launched Codex process. For `codex app-server`, the
-wrapper builds a merged catalog from Codex's cached official models and the
-custom catalog, then starts app-server with `-c model_catalog_json=<merged>`.
-If either catalog is missing, the wrapper passes through without injecting a
-static catalog. That keeps official OpenAI/Codex traffic on the direct `openai`
-provider while giving custom slugs native Codex model metadata for
-context-window, auto-compaction, and truncation behavior when both inputs are
-available.
+wrapper builds a merged catalog from Codex's cached official models and custom
+catalog rows from `CODEX_CUSTOM_MODEL_CATALOG_JSON`, `$CODEX_HOME/custom-models.json`,
+`$XDG_CONFIG_HOME/codex-desktop/custom-models.json`, and the optional shim
+compatibility catalog. It then starts app-server with
+`-c model_catalog_json=<merged>`. If no official cache or no custom rows are
+available, the wrapper passes through without injecting a static catalog. That
+keeps official OpenAI/Codex traffic on the direct `openai` provider while
+giving custom slugs native Codex model metadata for context-window,
+auto-compaction, and truncation behavior when both inputs are available.
 The wrapper also fills app-server compatibility defaults for compact custom
 rows, including reasoning levels, shell type, visibility, supported plans, and
 base instructions. Explicit catalog values win; missing legacy custom rows
@@ -50,9 +52,10 @@ rows. With this feature enabled, the Desktop webview reads catalog rows, groups
 them by `provider_display_name`, and expects the catalog source to de-duplicate
 visible `(provider_display_name, display_name)` pairs while preserving
 route-stable slugs for saved threads and overrides.
-The webview reads the configured catalog through the app's own loopback server
-at `/codex-linux/custom-model-catalog.json`; `http://127.0.0.1:8765/api/models`
-is still queried as an optional live shim compatibility source.
+The webview reads the same configured, user, and optional shim catalog paths
+through the app's own loopback server at
+`/codex-linux/custom-model-catalog.json`; `http://127.0.0.1:8765/api/models` is
+still queried as an optional live shim compatibility source.
 
 Required patch points:
 

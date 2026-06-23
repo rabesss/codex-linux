@@ -53,21 +53,33 @@ PY
 
 build_merged_catalog() {
     local codex_home="${CODEX_HOME:-$HOME/.codex}"
+    local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
     local state_home="${XDG_STATE_HOME:-$HOME/.local/state}"
     local official_cache="${CODEX_CUSTOM_MODEL_OFFICIAL_CACHE_JSON:-$codex_home/models_cache.json}"
-    local custom_catalog="${CODEX_CUSTOM_MODEL_CATALOG_JSON:-${CODEX_SHIM_MODEL_CATALOG_JSON:-$state_home/codex-shim/custom_model_catalog.json}}"
     local output_dir="${CODEX_LINUX_APP_STATE_DIR:-$state_home/codex-desktop}/custom-model-catalog"
     local output_path="$output_dir/merged-model-catalog.json"
+    local custom_catalog_sources=()
 
-    [ -r "$custom_catalog" ] || return 1
+    if [ -n "${CODEX_CUSTOM_MODEL_CATALOG_JSON:-}" ]; then
+        custom_catalog_sources+=("$CODEX_CUSTOM_MODEL_CATALOG_JSON")
+    fi
+    custom_catalog_sources+=(
+        "$codex_home/custom-models.json"
+        "$config_home/codex-desktop/custom-models.json"
+    )
+    if [ -n "${CODEX_SHIM_MODEL_CATALOG_JSON:-}" ]; then
+        custom_catalog_sources+=("$CODEX_SHIM_MODEL_CATALOG_JSON")
+    else
+        custom_catalog_sources+=("$state_home/codex-shim/custom_model_catalog.json")
+    fi
     mkdir -p "$output_dir"
 
-    python3 - "$official_cache" "$custom_catalog" "$output_path" <<'PY'
+    python3 - "$official_cache" "$output_path" "${custom_catalog_sources[@]}" <<'PY'
 import json
 import os
 import sys
 
-official_cache, custom_catalog, output_path = sys.argv[1:4]
+official_cache, output_path, *custom_catalog_sources = sys.argv[1:]
 
 def load_catalog(path):
     if not path or not os.path.exists(path):
@@ -82,8 +94,25 @@ def load_catalog(path):
         providers = {}
     return [model for model in models if isinstance(model, dict) and isinstance(model.get("slug"), str)], providers
 
+def load_custom_catalogs(paths):
+    models = []
+    providers = {}
+    seen_paths = set()
+    for path in paths:
+        if not path:
+            continue
+        resolved = os.path.abspath(os.path.expanduser(path))
+        if resolved in seen_paths:
+            continue
+        seen_paths.add(resolved)
+        catalog_models, catalog_providers = load_catalog(resolved)
+        models.extend(catalog_models)
+        for provider_id, provider in catalog_providers.items():
+            providers.setdefault(provider_id, provider)
+    return models, providers
+
 official_models, official_providers = load_catalog(official_cache)
-custom_models, custom_providers = load_catalog(custom_catalog)
+custom_models, custom_providers = load_custom_catalogs(custom_catalog_sources)
 if not official_models or not custom_models:
     raise SystemExit(1)
 

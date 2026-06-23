@@ -3,6 +3,8 @@ import ctypes
 import ctypes.util
 import functools
 import http.server
+import io
+import json
 import os
 import signal
 import sys
@@ -41,21 +43,79 @@ if len(sys.argv) >= 4 and sys.argv[2] == "--bind":
 CUSTOM_MODEL_CATALOG_ROUTE = "/codex-linux/custom-model-catalog.json"
 
 
-def _custom_model_catalog_path():
-    configured = (
-        os.environ.get("CODEX_CUSTOM_MODEL_CATALOG_JSON")
-        or os.environ.get("CODEX_SHIM_MODEL_CATALOG_JSON")
+def _custom_model_catalog_paths():
+    codex_home = os.environ.get("CODEX_HOME", os.path.join(os.path.expanduser("~"), ".codex"))
+    config_home = os.environ.get("XDG_CONFIG_HOME", os.path.join(os.path.expanduser("~"), ".config"))
+    state_home = os.environ.get(
+        "XDG_STATE_HOME",
+        os.path.join(os.path.expanduser("~"), ".local", "state"),
     )
-    if not configured:
-        state_home = os.environ.get(
-            "XDG_STATE_HOME",
-            os.path.join(os.path.expanduser("~"), ".local", "state"),
-        )
-        configured = os.path.join(state_home, "codex-shim", "custom_model_catalog.json")
-    configured = os.path.abspath(os.path.expanduser(configured))
-    if os.path.isfile(configured) and os.access(configured, os.R_OK):
-        return configured
-    return None
+    configured = os.environ.get("CODEX_CUSTOM_MODEL_CATALOG_JSON")
+    shim_catalog = os.environ.get(
+        "CODEX_SHIM_MODEL_CATALOG_JSON",
+        os.path.join(state_home, "codex-shim", "custom_model_catalog.json"),
+    )
+    candidates = [
+        configured,
+        os.path.join(codex_home, "custom-models.json"),
+        os.path.join(config_home, "codex-desktop", "custom-models.json"),
+        shim_catalog,
+    ]
+    paths = []
+    seen_paths = set()
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = os.path.abspath(os.path.expanduser(candidate))
+        if path in seen_paths or not os.path.isfile(path) or not os.access(path, os.R_OK):
+            continue
+        paths.append(path)
+        seen_paths.add(path)
+    return paths
+
+
+def _read_custom_model_catalog(path):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return [], {}
+    models = data.get("models") if isinstance(data, dict) else data
+    providers = data.get("providers") if isinstance(data, dict) else {}
+    if not isinstance(models, list):
+        models = []
+    if not isinstance(providers, dict):
+        providers = {}
+    return (
+        [
+            model
+            for model in models
+            if isinstance(model, dict) and isinstance(model.get("slug"), str)
+        ],
+        providers,
+    )
+
+
+def _custom_model_catalog_payload():
+    providers = {}
+    models = []
+    seen_slugs = set()
+    for path in _custom_model_catalog_paths():
+        catalog_models, catalog_providers = _read_custom_model_catalog(path)
+        for provider_id, provider in catalog_providers.items():
+            providers.setdefault(provider_id, provider)
+        for model in catalog_models:
+            slug = model.get("slug")
+            if slug in seen_slugs:
+                continue
+            models.append(model)
+            seen_slugs.add(slug)
+    if not models:
+        return None
+    payload = {"version": 1, "models": models}
+    if providers:
+        payload["providers"] = providers
+    return json.dumps(payload, separators=(",", ":")).encode("utf-8") + b"\n"
 
 
 class CodexWebviewHandler(http.server.SimpleHTTPRequestHandler):
@@ -69,21 +129,15 @@ class CodexWebviewHandler(http.server.SimpleHTTPRequestHandler):
         return super().send_head()
 
     def send_custom_model_catalog_head(self):
-        catalog_path = _custom_model_catalog_path()
-        if catalog_path is None:
+        payload = _custom_model_catalog_payload()
+        if payload is None:
             self.send_error(404, "Custom model catalog not found")
-            return None
-        try:
-            handle = open(catalog_path, "rb")
-            size = os.fstat(handle.fileno()).st_size
-        except OSError:
-            self.send_error(404, "Custom model catalog not readable")
             return None
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(size))
+        self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
-        return handle
+        return io.BytesIO(payload)
 
     def end_headers(self):
         self.send_header("Cache-Control", "no-store, max-age=0")

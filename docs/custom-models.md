@@ -68,9 +68,16 @@ for the local Ollama/LM Studio flow.
    make install-native
    ```
 
-3. Provide a catalog. Set `CODEX_CUSTOM_MODEL_CATALOG_JSON` to a JSON file that
-   follows [the shared schema](custom-model-catalog.schema.json), or run the
-   optional shim catalog service and let Desktop use its compatibility path.
+3. Provide a catalog that follows
+   [the shared schema](custom-model-catalog.schema.json). Desktop reads
+   catalog rows, in priority order, from:
+
+   - `CODEX_CUSTOM_MODEL_CATALOG_JSON`, when set;
+   - `$CODEX_HOME/custom-models.json`;
+   - `$XDG_CONFIG_HOME/codex-desktop/custom-models.json`;
+   - `CODEX_SHIM_MODEL_CATALOG_JSON`, when set, or the optional shim
+     compatibility path at
+     `$XDG_STATE_HOME/codex-shim/custom_model_catalog.json`.
 
    Examples live under
    [`docs/examples/custom-model-catalog`](examples/custom-model-catalog/):
@@ -122,8 +129,10 @@ A user who wants custom models needs these pieces:
 
 - a Desktop build with `custom-model-catalog` enabled, usually through
   `make install-custom-models`;
-- a readable catalog from `CODEX_CUSTOM_MODEL_CATALOG_JSON` or the optional
-  shim `/api/models` compatibility source;
+- a readable catalog from `CODEX_CUSTOM_MODEL_CATALOG_JSON`,
+  `$CODEX_HOME/custom-models.json`,
+  `$XDG_CONFIG_HOME/codex-desktop/custom-models.json`, or the optional shim
+  compatibility source;
 - durable non-default `[model_providers.<id>]` entries for saved custom
   threads;
 - upstream route credentials held by environment variables, a credential
@@ -328,8 +337,8 @@ Then verify through Desktop:
 
 ## Current Constraints
 
-- Custom rows are unavailable when neither `CODEX_CUSTOM_MODEL_CATALOG_JSON`
-  nor the optional shim catalog path is readable.
+- Custom rows are unavailable when none of the configured, user, or optional
+  shim catalog paths are readable.
 - If custom rows show `CLIProxyAPI / Cursor ...` as the primary model label,
   update `codex-shim`, regenerate the Desktop catalog, restart the shim
   service, and restart Desktop. Current shim builds reserve that information
