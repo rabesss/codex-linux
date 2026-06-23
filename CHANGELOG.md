@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Added `scripts/custom-model-catalog-setup.js`, a safe direct/local provider
+  setup helper that creates or updates `$CODEX_HOME/custom-models.json`, prints
+  the matching official Codex `[model_providers.<id>]` config snippet, refuses
+  credential-shaped static headers, and keeps the global provider default on
+  `openai`.
 - Custom-model rows in the composer model submenu are now grouped by provider
   using `providerDisplayName` metadata, keeping long mixed provider lists
   scannable without reintroducing provider prefixes into model names. The

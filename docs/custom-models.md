@@ -101,6 +101,31 @@ models.
    Examples live under
    [`docs/examples/custom-model-catalog`](examples/custom-model-catalog/):
    direct provider, local provider, plain shim, and CLIProxyAPI-through-shim.
+   To create or update a direct/local provider row without hand-editing JSON,
+   use the setup helper:
+
+   ```bash
+   node scripts/custom-model-catalog-setup.js add-direct \
+     --provider openrouter \
+     --provider-name "OpenRouter" \
+     --base-url "https://openrouter.ai/api/v1" \
+     --wire-api responses \
+     --env-key OPENROUTER_API_KEY \
+     --slug openrouter-qwen3-coder \
+     --model qwen/qwen3-coder \
+     --display-name "Qwen3 Coder" \
+     --context-window 262144 \
+     --auto-compact-token-limit 210000 \
+     --truncation-limit 64000 \
+     --supports-tools
+   ```
+
+   The helper writes only catalog metadata, defaults to
+   `$CODEX_HOME/custom-models.json`, keeps the file owner-only, prints the
+   matching `[model_providers.<id>]` snippet, and does not write API keys or
+   change `~/.codex/config.toml`. Use `--dry-run` to validate and print the
+   snippet without writing.
+
    Validate a catalog before restarting Desktop:
 
    ```bash
@@ -344,6 +369,7 @@ After any Desktop update:
 
 ```bash
 node --test linux-features/custom-model-catalog/test.js
+node --test scripts/custom-model-catalog-setup.test.js
 scripts/workstation/verify-policy.sh
 scripts/workstation/verify-custom-model-mcp-routing.sh codex-app
 ```

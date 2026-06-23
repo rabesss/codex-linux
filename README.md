@@ -205,6 +205,26 @@ policy for custom rows. Catalog rows declare their own `model_provider`, so a
 direct provider row can route through its own `[model_providers.<id>]` config
 while shim rows continue to route through `codex_shim`.
 
+For direct or local providers, use the setup helper to create the catalog row
+and print the matching official Codex provider config without storing secrets:
+
+```bash
+node scripts/custom-model-catalog-setup.js add-direct \
+  --provider openrouter \
+  --provider-name "OpenRouter" \
+  --base-url "https://openrouter.ai/api/v1" \
+  --wire-api responses \
+  --env-key OPENROUTER_API_KEY \
+  --slug openrouter-qwen3-coder \
+  --model qwen/qwen3-coder \
+  --display-name "Qwen3 Coder" \
+  --supports-tools
+```
+
+The helper writes catalog metadata to `$CODEX_HOME/custom-models.json` by
+default, prints a `[model_providers.<id>]` snippet for the user config, and
+leaves the global `model_provider` on `openai`.
+
 The custom-model picker uses route-neutral model names. For example, a
 CLIProxyAPI route can display `Step 3.7 Flash:free` while the tooltip/provider
 metadata carries `CLIProxyAPI / Nous Portal`. Internal slugs may still include

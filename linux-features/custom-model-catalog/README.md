@@ -90,6 +90,25 @@ Validate a custom catalog before using it:
 node scripts/validate-custom-model-catalog.js docs/examples/custom-model-catalog/direct-provider.json
 ```
 
+Create or update a direct/local provider catalog row without storing secrets:
+
+```bash
+node scripts/custom-model-catalog-setup.js add-direct \
+  --provider openrouter \
+  --provider-name "OpenRouter" \
+  --base-url "https://openrouter.ai/api/v1" \
+  --wire-api responses \
+  --env-key OPENROUTER_API_KEY \
+  --slug openrouter-qwen3-coder \
+  --model qwen/qwen3-coder \
+  --display-name "Qwen3 Coder" \
+  --supports-tools
+```
+
+The helper prints the `[model_providers.<id>]` TOML snippet that belongs in
+Codex config, keeps the global default on `openai`, and writes only
+provider/model metadata to the catalog.
+
 Run the workstation policy after changing this feature:
 
 ```bash
