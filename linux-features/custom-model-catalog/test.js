@@ -148,6 +148,75 @@ async function startCatalogServer(catalog) {
   };
 }
 
+function extractWrapperCatalogPython() {
+  const wrapper = fs.readFileSync(path.join(__dirname, "codex-cli-wrapper"), "utf8");
+  const startNeedle = 'python3 - "$official_cache" "$output_path" "${custom_catalog_sources[@]}" <<\'PY\'\n';
+  const endNeedle = "\nPY\n}";
+  const start = wrapper.indexOf(startNeedle);
+  assert.notEqual(start, -1);
+  const end = wrapper.indexOf(endNeedle, start);
+  assert.notEqual(end, -1);
+  return wrapper.slice(start + startNeedle.length, end);
+}
+
+function pythonLoopbackCatalogResults({ source, stopNeedle, functionName, argv = [] }) {
+  const stop = source.indexOf(stopNeedle);
+  assert.notEqual(stop, -1);
+  const urls = [
+    "http://127.0.0.1:8765/api/models",
+    "http://localhost:8765/api/models",
+    "http://[::1]:8765/api/models",
+    "http://127.0.0.1/api/models",
+    "http://127.0.0.1:8765",
+    "https://127.0.0.1:8765/api/models",
+    "http://192.168.1.10:8765/api/models",
+    "http://127.0.0.1:999999/api/models",
+  ];
+  const prefix = source.slice(0, stop);
+  const script = [
+    prefix,
+    "import json as __json",
+    `__urls = ${JSON.stringify(urls)}`,
+    `print(__json.dumps({url: ${functionName}(url) for url in __urls}, sort_keys=True))`,
+  ].join("\n");
+  const result = childProcess.spawnSync("python3", ["-c", script, ...argv], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  return JSON.parse(result.stdout);
+}
+
+test("catalog URL source helpers require loopback HTTP URLs with explicit ports", () => {
+  const expected = {
+    "http://127.0.0.1:8765/api/models": true,
+    "http://localhost:8765/api/models": true,
+    "http://[::1]:8765/api/models": true,
+    "http://127.0.0.1/api/models": false,
+    "http://127.0.0.1:8765": false,
+    "https://127.0.0.1:8765/api/models": false,
+    "http://192.168.1.10:8765/api/models": false,
+    "http://127.0.0.1:999999/api/models": false,
+  };
+  const wrapperSource = extractWrapperCatalogPython();
+  assert.deepEqual(
+    pythonLoopbackCatalogResults({
+      source: wrapperSource,
+      stopNeedle: "def load_catalog(path):",
+      functionName: "loopback_catalog_url",
+      argv: ["official-cache.json", "merged-catalog.json"],
+    }),
+    expected,
+  );
+  const webviewSource = fs.readFileSync(path.join(__dirname, "..", "..", "launcher", "webview-server.py"), "utf8");
+  assert.deepEqual(
+    pythonLoopbackCatalogResults({
+      source: webviewSource,
+      stopNeedle: "def _custom_model_catalog_paths():",
+      functionName: "_loopback_catalog_url",
+      argv: ["0"],
+    }),
+    expected,
+  );
+});
+
 function attachmentMenuBundleFixture() {
   return [
     "var ht=e(z(),1),gt=(0,Z.memo)(function(e){let t=(0,$.c)(98),{onAddImageDataUrls:n,onAddAppshotContext:r,onAppshotCaptureAnimationDuration:i,onAppshotCaptureSettled:a,onAppshotCaptureStarted:o,getAppshotCaptureAnimationDestinationFrame:s,getAttachmentGen:c,setFileAttachments:l,onAddLocalFileAttachments:u,conversationId:d,executionTargetCwd:h,executionTargetHostId:g,isAutoContextOn:_,setIsAutoContextOn:v,ideContextStatus:b,hasGoal:x,isGoalActionAvailable:S,onClearGoal:C,onOpenGoalEditor:w,supportsFileAttachments:T,supportsRemoteFileAttachments:E,disabled:O}=e,k=T===void 0?!0:T,A=E===void 0?!1:E,j=O===void 0?!1:O,M=f(y),N=ee();",
@@ -950,6 +1019,21 @@ test("model query patch merges shim catalog rows into Desktop model list data", 
   assert.equal(runtimeConfig.model_auto_compact_token_limit, 214958);
   assert.equal(runtimeConfig.truncation_policy.mode, "tokens");
   assert.equal(runtimeConfig.truncation_policy.limit, 180000);
+  assert.equal(sandbox.__codexLinuxCustomModelToolSupport.get("opencode-go-kimi-k2-6"), true);
+  assert.equal(sandbox.__codexLinuxCustomModelToolSupport.get("kimi-k2.6"), true);
+
+  vm.runInNewContext(
+    [
+      ROUTING_HELPER_SOURCE,
+      "toolSlug=codexLinuxCustomModelSupportsTools(`opencode-go-kimi-k2-6`);",
+      "toolWire=codexLinuxCustomModelSupportsTools(`kimi-k2.6`);",
+      "toolUnknown=codexLinuxCustomModelSupportsTools(`gpt-5.5`);",
+    ].join(""),
+    sandbox,
+  );
+  assert.equal(sandbox.toolSlug, true);
+  assert.equal(sandbox.toolWire, true);
+  assert.equal(sandbox.toolUnknown, false);
 });
 
 test("model query patch preserves explicit providers from shared catalog rows", async () => {
@@ -1032,6 +1116,9 @@ test("model query patch preserves explicit providers from shared catalog rows", 
   assert.equal(sandbox.__codexLinuxCustomModelProviders.has("missing-provider-row"), false);
   assert.equal(sandbox.__codexLinuxCustomModelWireModels.get("openrouter-qwen3-coder"), "qwen/qwen3-coder");
   assert.equal(sandbox.__codexLinuxCustomModelWireModels.get("cursor-zai-coding-glm-5-2"), "z-ai/glm-5.2");
+  assert.equal(sandbox.__codexLinuxCustomModelToolSupport.get("openrouter-qwen3-coder"), false);
+  assert.equal(sandbox.__codexLinuxCustomModelToolSupport.get("qwen/qwen3-coder"), false);
+  assert.equal(sandbox.__codexLinuxCustomModelToolSupport.get("cursor-zai-coding-glm-5-2"), false);
   assert.deepEqual(
     JSON.parse(JSON.stringify(sandbox.__codexLinuxCustomModelProviderConfigs.get("openrouter"))),
     {
@@ -1782,14 +1869,26 @@ test("fork conversation routing leaves official models on the default provider",
   assert.equal(sandbox.custom.config.model_provider, "codex_shim");
 });
 
-test("resume dynamic-tools patch re-fetches tools for custom slugs", () => {
+test("resume dynamic-tools patch re-fetches tools only for tool-capable catalog rows", () => {
   const source = [
     ROUTING_HELPER_SOURCE,
     "async resumeThread(t,ee,te,y,E){return this.buildNewConversationParams(ee,te,y[0]??`/`,E,E.approvalsReviewer,{skipDynamicTools:!0,threadId:t})}",
   ].join("");
   const patched = applyPatchTwice(applyCustomModelResumeDynamicToolsPatch, source);
 
-  assert.match(patched, /skipDynamicTools:!codexLinuxCustomModelCustomSlug\(ee\)/);
+  assert.match(patched, /skipDynamicTools:!codexLinuxCustomModelSupportsTools\(ee\)/);
+  assert.doesNotMatch(patched, /skipDynamicTools:!codexLinuxCustomModelCustomSlug/);
+});
+
+test("resume dynamic-tools patch upgrades old custom-slug gating", () => {
+  const source = [
+    ROUTING_HELPER_SOURCE,
+    "async resumeThread(t,ee,te,y,E){return this.buildNewConversationParams(ee,te,y[0]??`/`,E,E.approvalsReviewer,{skipDynamicTools:!codexLinuxCustomModelCustomSlug(ee),threadId:t})}",
+  ].join("");
+  const patched = applyPatchTwice(applyCustomModelResumeDynamicToolsPatch, source);
+
+  assert.match(patched, /skipDynamicTools:!codexLinuxCustomModelSupportsTools\(ee\)/);
+  assert.doesNotMatch(patched, /skipDynamicTools:!codexLinuxCustomModelCustomSlug/);
 });
 
 test("resume dynamic-tools patch is a no-op when the upstream resume needle drifts", () => {
@@ -1800,9 +1899,22 @@ test("resume dynamic-tools patch is a no-op when the upstream resume needle drif
 test("resume dynamic-tools payload patch forwards dynamicTools on thread/resume", () => {
   const needle =
     "personality:p?.personality===void 0?f?.personality??A.personality:p.personality,excludeTurns:b,...b?{initialTurnsPage:{limit:5,itemsView:`full`}}:{}})";
-  const source = `sendRequest(\`thread/resume\`,{threadId:t,${needle}`;
+  const source = `${ROUTING_HELPER_SOURCE}sendRequest(\`thread/resume\`,{threadId:t,${needle}`;
   const patched = applyPatchTwice(applyCustomModelResumeDynamicToolsPayloadPatch, source);
   assert.match(patched, /dynamicTools:A\.dynamicTools/);
+  assert.match(
+    patched,
+    /codexLinuxCustomModelSupportsTools\(A\.model\?\?A\.collaborationMode\?\.settings\?\.model\)/,
+  );
+});
+
+test("resume dynamic-tools payload patch requires the tool-support helper", () => {
+  const needle =
+    "personality:p?.personality===void 0?f?.personality??A.personality:p.personality,excludeTurns:b,...b?{initialTurnsPage:{limit:5,itemsView:`full`}}:{}})";
+  assert.throws(
+    () => applyCustomModelResumeDynamicToolsPayloadPatch(`sendRequest(\`thread/resume\`,{threadId:t,${needle}`),
+    /tool support helper must be injected/u,
+  );
 });
 
 test("model tooltip formatter surfaces provider and capability details", () => {

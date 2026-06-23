@@ -95,7 +95,8 @@ models.
      compatibility path at
      `$XDG_STATE_HOME/codex-shim/custom_model_catalog.json`;
    - optional loopback HTTP sources from `CODEX_CUSTOM_MODEL_CATALOG_URLS`
-     and `CODEX_SHIM_MODEL_CATALOG_URL`.
+     and `CODEX_SHIM_MODEL_CATALOG_URL`. HTTP catalog URLs must use a
+     loopback host, an explicit port, and a path.
 
    Examples live under
    [`docs/examples/custom-model-catalog`](examples/custom-model-catalog/):
@@ -302,6 +303,7 @@ configs remain available even when app-server has already supplied the visible
 custom model row. The renderer does not query the shim directly. If a shim or
 another local adapter should be queried live, provide its loopback catalog URL
 through `CODEX_CUSTOM_MODEL_CATALOG_URLS` or `CODEX_SHIM_MODEL_CATALOG_URL`.
+Use an explicit port, for example `http://127.0.0.1:8765/api/models`.
 
 This is required: picker metadata alone does not change runtime context
 accounting or compaction behavior. The important fields are:

@@ -98,11 +98,13 @@ def loopback_catalog_url(url):
     try:
         parts = urllib.parse.urlsplit(url)
         hostname = parts.hostname
+        port = parts.port
     except ValueError:
         return False
     return (
         parts.scheme == "http"
         and hostname in {"127.0.0.1", "localhost", "::1"}
+        and port is not None
         and bool(parts.netloc)
         and bool(parts.path)
     )

@@ -34,7 +34,7 @@ const MODEL_QUERY_SHIM_HELPER_SOURCE = [
   "function codexLinuxCustomModelToRow(e,t){let n=codexLinuxCustomModelString(e.slug);if(!n)return null;let r=codexLinuxCustomModelArray(e.input_modalities??e.inputModalities);r.length||(r=[`text`]);let i=codexLinuxCustomModelString(e.model_provider??e.modelProvider);if(i==null)return null;let a=i,o=codexLinuxCustomModelString(e.provider_display_name??e.providerDisplayName??e.provider_name??e.providerName)??codexLinuxCustomModelString(t?.get(a)?.name)??codexLinuxCustomModelString(e.provider??e.owned_by??e.ownedBy)??a,s=codexLinuxCustomModelString(e.display_name??e.displayName??e.name??n)??n,c=codexLinuxCustomModelString(e.description)??`${s} via ${o}.`,l=codexLinuxCustomModelString(e.upstream_model_id??e.upstreamModelId??e.model??n)??n,u=codexLinuxCustomModelString(e.source)??(a===`codex_shim`?`CLIProxyAPI/local adapter`:`custom catalog`),d=codexLinuxCustomModelString(e.context_window??e.max_context_window??e.contextWindow??e.maxContextWindow),f=codexLinuxCustomModelString(e.model_catalog_json??e.modelCatalogJson),p=e.auto_compact_token_limit??e.autoCompactTokenLimit??null,m=e.truncation_policy??e.truncationPolicy??null;return{model:n,displayName:s,description:c,hidden:!1,isDefault:!1,modelProvider:a,model_provider:a,explicitModelProvider:i!=null,owned_by:codexLinuxCustomModelString(e.owned_by??e.ownedBy)??a,provider:a,providerDisplayName:o,upstreamModelId:l,source:u,contextWindow:d,modelCatalogJson:f,autoCompactTokenLimit:p,truncationPolicy:m,inputModalities:r,supportedReasoningEfforts:codexLinuxCustomModelReasoning(e.supported_reasoning_efforts??e.supportedReasoningEfforts??e.supported_reasoning_levels),defaultReasoningEffort:codexLinuxCustomModelString(e.default_reasoning_effort??e.defaultReasoningEffort??e.default_reasoning_level)??`medium`,supportsTools:e.supports_tools===!0||e.supportsTools===!0,supportsReasoning:e.supports_reasoning===!0||e.supportsReasoning===!0,supportsStreaming:e.supports_streaming!==!1&&e.supportsStreaming!==!1,supportsImageInputs:r.includes(`image`),supportsImageDetailOriginal:e.supports_image_detail_original===!0||e.supportsImageDetailOriginal===!0}}",
   "function codexLinuxCustomModelExistingRowMatches(e,t){if(!e||typeof e!=`object`)return!1;let n=codexLinuxCustomModelString(e.modelProvider??e.model_provider??e.provider),r=codexLinuxCustomModelString(t.modelProvider??t.model_provider);if(n&&r&&n===r)return!0;let i=codexLinuxCustomModelString(e.displayName??e.display_name??e.name),a=codexLinuxCustomModelString(t.displayName??t.display_name??t.name),o=codexLinuxCustomModelString(e.description),s=codexLinuxCustomModelString(t.description);return i!=null&&a!=null&&i===a&&o!=null&&s!=null&&o===s}",
   "async function codexLinuxCustomModelFetchCatalogs(){try{let e=await fetch(`/codex-linux/custom-model-catalog.json`,{cache:`no-store`});return e.ok?[await e.json()]:[]}catch{return[]}}",
-  "async function codexLinuxCustomModelMergeListModels(e){try{let t=await codexLinuxCustomModelFetchCatalogs(),n=codexLinuxCustomModelMergeProviderConfigs(t),r=t.flatMap(e=>codexLinuxCustomModelCatalogRows(e)).map(e=>codexLinuxCustomModelToRow(e,n)).filter(Boolean),i=e&&typeof e==`object`?e:{data:[]},a=codexLinuxCustomModelArray(i.data),o=e=>typeof e==`string`?e.trim().toLowerCase():``,s=new Set(a.flatMap(e=>[o(e?.model),o(e?.id)]).filter(Boolean)),c=new Map,l=new Map(a.flatMap(e=>{let t=o(e?.model??e?.id);return t?[[t,e]]:[]})),u=new Set;for(let e of r){let t=o(e.model),n=`${e.providerDisplayName}\\0${e.displayName}`;if(!t||u.has(n))continue;u.add(n);let r=l.get(t);if(s.has(t)&&!codexLinuxCustomModelExistingRowMatches(r,e))continue;c.has(t)||c.set(t,e)}let d=new Set,f=[...c.values()].filter(e=>{let t=`${e.providerDisplayName}\\0${e.displayName}`;return!s.has(o(e.model))&&!d.has(t)&&(d.add(t),!0)}),p=[...c.values()],m=e=>{let t=o(e.model),n=o(e.upstreamModelId);return n&&n!==t&&!s.has(n)?[t,n]:[t]};globalThis.__codexLinuxCustomModelSlugs=new Set(p.flatMap(m)),globalThis.__codexLinuxCustomModelCatalogPaths=new Map(p.flatMap(e=>e.modelCatalogJson==null?[]:m(e).map(t=>[t,e.modelCatalogJson]))),globalThis.__codexLinuxCustomModelRuntimeConfig=new Map(p.flatMap(e=>{let t=codexLinuxCustomModelRuntimeConfig(e);return Object.keys(t).length===0?[]:m(e).map(n=>[n,t])})),globalThis.__codexLinuxCustomModelProviders=new Map(p.flatMap(e=>m(e).map(t=>[t,e.modelProvider]))),globalThis.__codexLinuxCustomModelWireModels=new Map(p.flatMap(e=>{let t=codexLinuxCustomModelString(e.upstreamModelId);return t?m(e).map(e=>[e,t]):[]})),globalThis.__codexLinuxCustomModelProviderConfigs=new Map([...n].filter(([e])=>p.some(t=>t.modelProvider===e)));return{...i,data:[...a,...f]}}catch{return e}}",
+  "async function codexLinuxCustomModelMergeListModels(e){try{let t=await codexLinuxCustomModelFetchCatalogs(),n=codexLinuxCustomModelMergeProviderConfigs(t),r=t.flatMap(e=>codexLinuxCustomModelCatalogRows(e)).map(e=>codexLinuxCustomModelToRow(e,n)).filter(Boolean),i=e&&typeof e==`object`?e:{data:[]},a=codexLinuxCustomModelArray(i.data),o=e=>typeof e==`string`?e.trim().toLowerCase():``,s=new Set(a.flatMap(e=>[o(e?.model),o(e?.id)]).filter(Boolean)),c=new Map,l=new Map(a.flatMap(e=>{let t=o(e?.model??e?.id);return t?[[t,e]]:[]})),u=new Set;for(let e of r){let t=o(e.model),n=`${e.providerDisplayName}\\0${e.displayName}`;if(!t||u.has(n))continue;u.add(n);let r=l.get(t);if(s.has(t)&&!codexLinuxCustomModelExistingRowMatches(r,e))continue;c.has(t)||c.set(t,e)}let d=new Set,f=[...c.values()].filter(e=>{let t=`${e.providerDisplayName}\\0${e.displayName}`;return!s.has(o(e.model))&&!d.has(t)&&(d.add(t),!0)}),p=[...c.values()],m=e=>{let t=o(e.model),n=o(e.upstreamModelId);return n&&n!==t&&!s.has(n)?[t,n]:[t]};globalThis.__codexLinuxCustomModelSlugs=new Set(p.flatMap(m)),globalThis.__codexLinuxCustomModelCatalogPaths=new Map(p.flatMap(e=>e.modelCatalogJson==null?[]:m(e).map(t=>[t,e.modelCatalogJson]))),globalThis.__codexLinuxCustomModelRuntimeConfig=new Map(p.flatMap(e=>{let t=codexLinuxCustomModelRuntimeConfig(e);return Object.keys(t).length===0?[]:m(e).map(n=>[n,t])})),globalThis.__codexLinuxCustomModelProviders=new Map(p.flatMap(e=>m(e).map(t=>[t,e.modelProvider]))),globalThis.__codexLinuxCustomModelWireModels=new Map(p.flatMap(e=>{let t=codexLinuxCustomModelString(e.upstreamModelId);return t?m(e).map(e=>[e,t]):[]})),globalThis.__codexLinuxCustomModelToolSupport=new Map(p.flatMap(e=>m(e).map(t=>[t,e.supportsTools===!0]))),globalThis.__codexLinuxCustomModelProviderConfigs=new Map([...n].filter(([e])=>p.some(t=>t.modelProvider===e)));return{...i,data:[...a,...f]}}catch{return e}}",
 ].join("");
 const MODEL_QUERY_SHIM_INSERTION = "var x=100,S=[`models`,`list`];";
 const MODEL_QUERY_SHIM_INSERTION_REGEX =
@@ -60,6 +60,7 @@ const ROUTING_HELPER_NAME = "codexLinuxCustomModelApplyRouting";
 const ROUTING_HELPER_SOURCE = [
   "function codexLinuxCustomModelSlugKey(e){return typeof e==`string`?e.trim().toLowerCase():``}",
   "function codexLinuxCustomModelCustomSlug(e){let t=codexLinuxCustomModelSlugKey(e);return t.length>0&&globalThis.__codexLinuxCustomModelSlugs?.has(t)===!0}",
+  "function codexLinuxCustomModelSupportsTools(e){let t=codexLinuxCustomModelSlugKey(e);return t.length>0&&globalThis.__codexLinuxCustomModelToolSupport?.get(t)===!0}",
   "function codexLinuxCustomModelRouteModel(e,t){return codexLinuxCustomModelSlugKey(e).length>0?e:t}",
   "function codexLinuxCustomModelProviderForSlug(e){let t=codexLinuxCustomModelSlugKey(e);if(!t)return null;let n=globalThis.__codexLinuxCustomModelProviders?.get(t);return typeof n==`string`&&n.trim().length>0?n.trim():null}",
   "function codexLinuxCustomModelWireModel(e){let t=codexLinuxCustomModelSlugKey(e),n=globalThis.__codexLinuxCustomModelWireModels?.get(t);return typeof n==`string`&&n.trim().length>0?n.trim():e}",
@@ -116,11 +117,11 @@ const TURN_START_ROUTING_LEGACY_PATCHED_REGEX =
 const RESUME_SKIP_DYNAMIC_TOOLS_REGEX =
   /buildNewConversationParams\((\w+),(\w+),(\w+)\[0\]\?\?`\/`,(\w+),(\w+)\.approvalsReviewer,\{skipDynamicTools:!0,threadId:(\w+)\}\)/u;
 const RESUME_SKIP_DYNAMIC_TOOLS_REPLACEMENT =
-  "buildNewConversationParams($1,$2,$3[0]??`/`,$4,$5.approvalsReviewer,{skipDynamicTools:!codexLinuxCustomModelCustomSlug($1),threadId:$6})";
+  "buildNewConversationParams($1,$2,$3[0]??`/`,$4,$5.approvalsReviewer,{skipDynamicTools:!codexLinuxCustomModelSupportsTools($1),threadId:$6})";
 const RESUME_DYNAMIC_TOOLS_PAYLOAD_NEEDLE =
   "personality:p?.personality===void 0?f?.personality??A.personality:p.personality,excludeTurns:b,...b?{initialTurnsPage:{limit:5,itemsView:`full`}}:{}})";
 const RESUME_DYNAMIC_TOOLS_PAYLOAD_PATCH =
-  "personality:p?.personality===void 0?f?.personality??A.personality:p.personality,excludeTurns:b,...A.dynamicTools==null?{}:{dynamicTools:A.dynamicTools},...b?{initialTurnsPage:{limit:5,itemsView:`full`}}:{}})";
+  "personality:p?.personality===void 0?f?.personality??A.personality:p.personality,excludeTurns:b,...!codexLinuxCustomModelSupportsTools(A.model??A.collaborationMode?.settings?.model)||A.dynamicTools==null?{}:{dynamicTools:A.dynamicTools},...b?{initialTurnsPage:{limit:5,itemsView:`full`}}:{}})";
 const MODEL_TOOLTIP_HELPER_NAME = "codexLinuxCustomModelTooltip";
 const MODEL_TOOLTIP_HELPER_SOURCE = [
   "function codexLinuxCustomModelTooltipValue(e){return typeof e==`string`&&e.trim().length>0?e.trim():typeof e==`number`&&Number.isFinite(e)?String(e):null}",
@@ -591,15 +592,21 @@ function applyCustomModelTurnStartRoutingPatch(source) {
 }
 
 function applyCustomModelResumeDynamicToolsPatch(source) {
-  if (RESUME_SKIP_DYNAMIC_TOOLS_REGEX.test(source) && source.includes("skipDynamicTools:!codexLinuxCustomModelCustomSlug")) {
+  if (source.includes("skipDynamicTools:!codexLinuxCustomModelSupportsTools")) {
     return source;
+  }
+  if (source.includes("skipDynamicTools:!codexLinuxCustomModelCustomSlug")) {
+    return source.replaceAll(
+      "skipDynamicTools:!codexLinuxCustomModelCustomSlug(",
+      "skipDynamicTools:!codexLinuxCustomModelSupportsTools(",
+    );
   }
   if (!RESUME_SKIP_DYNAMIC_TOOLS_REGEX.test(source)) {
     return source;
   }
-  if (!source.includes("function codexLinuxCustomModelCustomSlug")) {
+  if (!source.includes("function codexLinuxCustomModelSupportsTools")) {
     throw new Error(
-      "Required custom model catalog patch failed: routing helper must be injected before resume dynamic-tools patch",
+      "Required custom model catalog patch failed: tool support helper must be injected before resume dynamic-tools patch",
     );
   }
   return source.replace(RESUME_SKIP_DYNAMIC_TOOLS_REGEX, RESUME_SKIP_DYNAMIC_TOOLS_REPLACEMENT);
@@ -611,6 +618,11 @@ function applyCustomModelResumeDynamicToolsPayloadPatch(source) {
   }
   if (!source.includes(RESUME_DYNAMIC_TOOLS_PAYLOAD_NEEDLE)) {
     return source;
+  }
+  if (!source.includes("function codexLinuxCustomModelSupportsTools")) {
+    throw new Error(
+      "Required custom model catalog patch failed: tool support helper must be injected before resume dynamic-tools payload patch",
+    );
   }
   return source.replace(RESUME_DYNAMIC_TOOLS_PAYLOAD_NEEDLE, RESUME_DYNAMIC_TOOLS_PAYLOAD_PATCH);
 }
