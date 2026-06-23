@@ -38,11 +38,18 @@
           "type": "object",
           "additionalProperties": { "type": "string" }
         },
+        "http_headers": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
         "requires_openai_auth": { "type": "boolean" },
         "auth": {
           "type": "object",
           "additionalProperties": true
-        }
+        },
+        "request_max_retries": { "type": "integer", "minimum": 1 },
+        "stream_max_retries": { "type": "integer", "minimum": 1 },
+        "stream_idle_timeout_ms": { "type": "integer", "minimum": 1 }
       }
     },
     "model": {

@@ -95,8 +95,10 @@ for the local Ollama/LM Studio flow.
    credential-shaped fields.
 
 4. Keep a durable, non-default provider entry for each provider used by saved
-   custom threads. For direct providers, use `env_key` or another protected
-   credential mechanism rather than plaintext keys:
+   custom threads. For direct providers, use `env_key`, `env_http_headers`, or
+   command-backed `auth` rather than plaintext keys. Static `http_headers`
+   should be limited to non-credential metadata headers such as provider title
+   or referrer hints:
 
    ```toml
    model_provider = "openai"
@@ -106,6 +108,8 @@ for the local Ollama/LM Studio flow.
    base_url = "https://openrouter.ai/api/v1"
    wire_api = "responses"
    env_key = "OPENROUTER_API_KEY"
+   env_http_headers = { "Authorization" = "OPENROUTER_AUTHORIZATION_HEADER" }
+   http_headers = { "HTTP-Referer" = "https://example.invalid", "X-Title" = "Codex Desktop Linux" }
    ```
 
    For the optional shim path:
@@ -227,9 +231,12 @@ row uses this minimum shape:
 
 Public model ids and route labels should be stable and must not contain user
 names, machine paths, credential hints, or account identifiers. Provider blocks
-should use `env_key` or another protected credential mechanism instead of
-plaintext secrets. Capability overrides should contain only metadata such as
-image/tool/reasoning support and context limits.
+should use `env_key`, `env_http_headers`, or command-backed `auth` instead of
+plaintext secrets. Static `http_headers` are accepted only for non-credential
+metadata headers; credential headers such as `Authorization`, cookies, API keys,
+tokens, or bearer values belong in protected indirections. Capability overrides
+should contain only metadata such as image/tool/reasoning support and context
+limits.
 
 Desktop-facing labels are intentionally split:
 

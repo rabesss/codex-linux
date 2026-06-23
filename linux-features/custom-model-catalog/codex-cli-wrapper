@@ -145,6 +145,94 @@ def load_catalog_url(url):
         providers = {}
     return [model for model in models if isinstance(model, dict) and isinstance(model.get("slug"), str)], providers
 
+def provider_string_value(value):
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+def provider_positive_int(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value > 0:
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = int(value.strip())
+        except ValueError:
+            return None
+        if parsed > 0:
+            return parsed
+    return None
+
+def provider_string_map(value):
+    if not isinstance(value, dict):
+        return None
+    mapped = {}
+    for key, item in value.items():
+        header = provider_string_value(key)
+        env_name = provider_string_value(item)
+        if header and env_name:
+            mapped[header] = env_name
+    return mapped or None
+
+def safe_static_header_name(value):
+    header = value.strip().lower()
+    if header in {"authorization", "proxy-authorization", "cookie", "set-cookie"}:
+        return False
+    return not any(token in header for token in (
+        "api-key",
+        "apikey",
+        "token",
+        "secret",
+        "credential",
+        "password",
+        "bearer",
+    ))
+
+def safe_http_headers(value):
+    if not isinstance(value, dict):
+        return None
+    mapped = {}
+    for key, item in value.items():
+        header = provider_string_value(key)
+        header_value = provider_string_value(item)
+        if header and header_value and safe_static_header_name(header):
+            mapped[header] = header_value
+    return mapped or None
+
+def provider_auth_config(value):
+    if not isinstance(value, dict):
+        return None
+    command = provider_string_value(value.get("command"))
+    if not command:
+        return None
+    return {"command": command}
+
+def provider_config(provider):
+    if not isinstance(provider, dict):
+        return None
+    config = {}
+    for field in ("name", "base_url", "wire_api", "env_key"):
+        value = provider_string_value(provider.get(field))
+        if value:
+            config[field] = value
+    env_headers = provider_string_map(provider.get("env_http_headers"))
+    if env_headers:
+        config["env_http_headers"] = env_headers
+    headers = safe_http_headers(provider.get("http_headers"))
+    if headers:
+        config["http_headers"] = headers
+    auth = provider_auth_config(provider.get("auth"))
+    if auth:
+        config["auth"] = auth
+    if isinstance(provider.get("requires_openai_auth"), bool):
+        config["requires_openai_auth"] = provider["requires_openai_auth"]
+    for field in ("request_max_retries", "stream_max_retries", "stream_idle_timeout_ms"):
+        value = provider_positive_int(provider.get(field))
+        if value is not None:
+            config[field] = value
+    return config or None
+
 def configured_catalog_urls():
     candidates = []
     configured = os.environ.get("CODEX_CUSTOM_MODEL_CATALOG_URLS")
@@ -177,12 +265,16 @@ def load_custom_catalogs(paths):
         catalog_models, catalog_providers = load_catalog(resolved)
         models.extend(catalog_models)
         for provider_id, provider in catalog_providers.items():
-            providers.setdefault(provider_id, provider)
+            config = provider_config(provider)
+            if config:
+                providers.setdefault(provider_id, config)
     for url in configured_catalog_urls():
         catalog_models, catalog_providers = load_catalog_url(url)
         models.extend(catalog_models)
         for provider_id, provider in catalog_providers.items():
-            providers.setdefault(provider_id, provider)
+            config = provider_config(provider)
+            if config:
+                providers.setdefault(provider_id, config)
     return models, providers
 
 official_models, official_providers = load_catalog(official_cache)

@@ -256,6 +256,19 @@ test("feature CLI wrapper injects a merged model catalog only for app-server", (
             name: "OpenRouter",
             base_url: "https://openrouter.ai/api/v1",
             wire_api: "responses",
+            env_key: "OPENROUTER_API_KEY",
+            env_http_headers: {
+              Authorization: "OPENROUTER_AUTHORIZATION_HEADER",
+            },
+            http_headers: {
+              "HTTP-Referer": "https://example.invalid",
+              "X-Title": "Codex Desktop Linux",
+              Authorization: "Bearer not-a-secret-but-unsafe-static-header",
+            },
+            auth: {
+              command: "printenv OPENROUTER_API_KEY",
+            },
+            requires_openai_auth: false,
           },
           codex_shim: {
             name: "Codex Shim",
@@ -346,6 +359,18 @@ test("feature CLI wrapper injects a merged model catalog only for app-server", (
     assert.equal(merged.models.find((model) => model.slug === "missing-provider-auto"), undefined);
     assert.equal(merged.providers.codex_shim.base_url, "http://127.0.0.1:8765/v1");
     assert.equal(merged.providers.openrouter.base_url, "https://openrouter.ai/api/v1");
+    assert.equal(merged.providers.openrouter.env_key, "OPENROUTER_API_KEY");
+    assert.deepEqual(merged.providers.openrouter.env_http_headers, {
+      Authorization: "OPENROUTER_AUTHORIZATION_HEADER",
+    });
+    assert.deepEqual(merged.providers.openrouter.http_headers, {
+      "HTTP-Referer": "https://example.invalid",
+      "X-Title": "Codex Desktop Linux",
+    });
+    assert.deepEqual(merged.providers.openrouter.auth, {
+      command: "printenv OPENROUTER_API_KEY",
+    });
+    assert.equal(merged.providers.openrouter.requires_openai_auth, false);
 
     const versionOutput = childProcess.execFileSync("bash", [wrapper, "--version"], {
       encoding: "utf8",
@@ -519,7 +544,23 @@ test("webview catalog route merges default user and shim catalog sources", async
     fs.writeFileSync(
       path.join(codexHome, "custom-models.json"),
       JSON.stringify({
-        providers: { openrouter: { name: "OpenRouter" } },
+        providers: {
+          openrouter: {
+            name: "OpenRouter",
+            base_url: "https://openrouter.ai/api/v1",
+            env_http_headers: {
+              Authorization: "OPENROUTER_AUTHORIZATION_HEADER",
+            },
+            http_headers: {
+              "HTTP-Referer": "https://example.invalid",
+              Authorization: "Bearer not-a-secret-but-unsafe-static-header",
+            },
+            auth: {
+              command: "printenv OPENROUTER_API_KEY",
+            },
+            requires_openai_auth: false,
+          },
+        },
         models: [
           { slug: "openrouter-qwen3-coder", model_provider: "openrouter" },
           { slug: "missing-provider-webview" },
@@ -563,6 +604,16 @@ test("webview catalog route merges default user and shim catalog sources", async
       ],
     );
     assert.deepEqual(Object.keys(catalog.providers).sort(), ["codex_shim", "local_lab", "openrouter"]);
+    assert.deepEqual(catalog.providers.openrouter.env_http_headers, {
+      Authorization: "OPENROUTER_AUTHORIZATION_HEADER",
+    });
+    assert.deepEqual(catalog.providers.openrouter.http_headers, {
+      "HTTP-Referer": "https://example.invalid",
+    });
+    assert.deepEqual(catalog.providers.openrouter.auth, {
+      command: "printenv OPENROUTER_API_KEY",
+    });
+    assert.equal(catalog.providers.openrouter.requires_openai_auth, false);
   } finally {
     if (serverProcess) {
       serverProcess.kill();
@@ -685,6 +736,9 @@ test("shared custom model catalog validator rejects unsafe or ambiguous rows", (
             base_url: "https://openrouter.ai/api/v1",
             wire_api: "responses",
             experimental_bearer_token: "s" + "k-not-a-real-token-but-key-shaped",
+            http_headers: {
+              Authorization: "Bearer not-a-secret-but-unsafe-static-header",
+            },
           },
         },
         models: [
@@ -721,6 +775,7 @@ test("shared custom model catalog validator rejects unsafe or ambiguous rows", (
     const invalidReport = JSON.parse(invalidRun.stdout);
     assert.equal(invalidReport.ok, false);
     assert.match(invalidReport.errors.join("\n"), /experimental_bearer_token/);
+    assert.match(invalidReport.errors.join("\n"), /http_headers\.Authorization/);
     assert.match(invalidReport.errors.join("\n"), /duplicate slug/);
     assert.match(invalidReport.errors.join("\n"), /duplicate visible row/);
     assert.match(invalidReport.errors.join("\n"), /context_window/);
@@ -909,6 +964,18 @@ test("model query patch preserves explicit providers from shared catalog rows", 
             base_url: "https://openrouter.ai/api/v1",
             wire_api: "chat",
             env_key: "OPENROUTER_API_KEY",
+            env_http_headers: {
+              Authorization: "OPENROUTER_AUTHORIZATION_HEADER",
+            },
+            http_headers: {
+              "HTTP-Referer": "https://example.invalid",
+              "X-Title": "Codex Desktop Linux",
+              Authorization: "Bearer not-a-secret-but-unsafe-static-header",
+            },
+            auth: {
+              command: "printenv OPENROUTER_API_KEY",
+            },
+            requires_openai_auth: false,
           },
           codex_shim: {
             name: "Codex Shim",
@@ -970,6 +1037,17 @@ test("model query patch preserves explicit providers from shared catalog rows", 
       base_url: "https://openrouter.ai/api/v1",
       wire_api: "chat",
       env_key: "OPENROUTER_API_KEY",
+      env_http_headers: {
+        Authorization: "OPENROUTER_AUTHORIZATION_HEADER",
+      },
+      http_headers: {
+        "HTTP-Referer": "https://example.invalid",
+        "X-Title": "Codex Desktop Linux",
+      },
+      auth: {
+        command: "printenv OPENROUTER_API_KEY",
+      },
+      requires_openai_auth: false,
     },
   );
 });

@@ -47,6 +47,101 @@ MAX_CUSTOM_MODEL_CATALOG_BYTES = 2 * 1024 * 1024
 CUSTOM_MODEL_CATALOG_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
+def _provider_string_value(value):
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _provider_positive_int(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value > 0:
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = int(value.strip())
+        except ValueError:
+            return None
+        if parsed > 0:
+            return parsed
+    return None
+
+
+def _provider_string_map(value):
+    if not isinstance(value, dict):
+        return None
+    mapped = {}
+    for key, item in value.items():
+        header = _provider_string_value(key)
+        env_name = _provider_string_value(item)
+        if header and env_name:
+            mapped[header] = env_name
+    return mapped or None
+
+
+def _safe_static_header_name(value):
+    header = value.strip().lower()
+    if header in {"authorization", "proxy-authorization", "cookie", "set-cookie"}:
+        return False
+    return not any(token in header for token in (
+        "api-key",
+        "apikey",
+        "token",
+        "secret",
+        "credential",
+        "password",
+        "bearer",
+    ))
+
+
+def _safe_http_headers(value):
+    if not isinstance(value, dict):
+        return None
+    mapped = {}
+    for key, item in value.items():
+        header = _provider_string_value(key)
+        header_value = _provider_string_value(item)
+        if header and header_value and _safe_static_header_name(header):
+            mapped[header] = header_value
+    return mapped or None
+
+
+def _provider_auth_config(value):
+    if not isinstance(value, dict):
+        return None
+    command = _provider_string_value(value.get("command"))
+    if not command:
+        return None
+    return {"command": command}
+
+
+def _provider_config(provider):
+    if not isinstance(provider, dict):
+        return None
+    config = {}
+    for field in ("name", "base_url", "wire_api", "env_key"):
+        value = _provider_string_value(provider.get(field))
+        if value:
+            config[field] = value
+    env_headers = _provider_string_map(provider.get("env_http_headers"))
+    if env_headers:
+        config["env_http_headers"] = env_headers
+    headers = _safe_http_headers(provider.get("http_headers"))
+    if headers:
+        config["http_headers"] = headers
+    auth = _provider_auth_config(provider.get("auth"))
+    if auth:
+        config["auth"] = auth
+    if isinstance(provider.get("requires_openai_auth"), bool):
+        config["requires_openai_auth"] = provider["requires_openai_auth"]
+    for field in ("request_max_retries", "stream_max_retries", "stream_idle_timeout_ms"):
+        value = _provider_positive_int(provider.get(field))
+        if value is not None:
+            config[field] = value
+    return config or None
+
+
 def _split_catalog_urls(raw):
     urls = []
     for line in raw.replace(",", "\n").splitlines():
@@ -154,6 +249,12 @@ def _catalog_models_and_providers(data):
         models = []
     if not isinstance(providers, dict):
         providers = {}
+    sanitized_providers = {}
+    for provider_id, provider in providers.items():
+        provider_key = _provider_string_value(provider_id)
+        config = _provider_config(provider)
+        if provider_key and config:
+            sanitized_providers[provider_key] = config
     return (
         [
             model
@@ -164,7 +265,7 @@ def _catalog_models_and_providers(data):
                 and _model_has_explicit_provider(model)
             )
         ],
-        providers,
+        sanitized_providers,
     )
 
 

@@ -5,7 +5,14 @@
       "name": "OpenRouter",
       "base_url": "https://openrouter.ai/api/v1",
       "wire_api": "responses",
-      "env_key": "OPENROUTER_API_KEY"
+      "env_key": "OPENROUTER_API_KEY",
+      "env_http_headers": {
+        "Authorization": "OPENROUTER_AUTHORIZATION_HEADER"
+      },
+      "http_headers": {
+        "HTTP-Referer": "https://example.invalid",
+        "X-Title": "Codex Desktop Linux"
+      }
     }
   },
   "models": [

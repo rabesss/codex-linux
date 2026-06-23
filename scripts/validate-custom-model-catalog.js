@@ -30,6 +30,7 @@ const REQUIRED_MODEL_FIELDS = [
 ];
 const SAFE_SECRET_REFERENCE_KEYS = new Set(["env_key", "env_http_headers", "auth"]);
 const SECRET_KEY_PATTERN = /(^|[_-])(api[_-]?key|secret|password|credential)([_-]|$)|(^|[_-])bearer([_-]|$)|(^|[_-])token$/i;
+const UNSAFE_STATIC_HEADER_PATTERN = /^(authorization|proxy-authorization|cookie|set-cookie)$|api[-_]?key|token|secret|credential|password|bearer/i;
 const OPENAI_KEY_PREFIX = "s" + "k-";
 const GITHUB_TOKEN_PREFIX = "g" + "hp_";
 const SLACK_TOKEN_PREFIX = "x" + "ox";
@@ -99,11 +100,44 @@ function validateProvider(providerId, provider, source, errors) {
   if (provider.wire_api != null && !["responses", "chat", "openai", "anthropic"].includes(provider.wire_api)) {
     errors.push(`${source}.providers.${providerId}.wire_api: unsupported wire API "${provider.wire_api}"`);
   }
-  if (provider.env_http_headers != null && !isObject(provider.env_http_headers)) {
-    errors.push(`${source}.providers.${providerId}.env_http_headers: must be an object`);
+  if (provider.env_http_headers != null) {
+    if (!isObject(provider.env_http_headers)) {
+      errors.push(`${source}.providers.${providerId}.env_http_headers: must be an object`);
+    } else {
+      for (const [header, envName] of Object.entries(provider.env_http_headers)) {
+        if (!stringValue(header)) {
+          errors.push(`${source}.providers.${providerId}.env_http_headers: header name must be a non-empty string`);
+        }
+        if (!stringValue(envName)) {
+          errors.push(`${source}.providers.${providerId}.env_http_headers.${header}: env var name must be a non-empty string`);
+        }
+      }
+    }
+  }
+  if (provider.http_headers != null) {
+    if (!isObject(provider.http_headers)) {
+      errors.push(`${source}.providers.${providerId}.http_headers: must be an object`);
+    } else {
+      for (const [header, headerValue] of Object.entries(provider.http_headers)) {
+        if (!stringValue(header)) {
+          errors.push(`${source}.providers.${providerId}.http_headers: header name must be a non-empty string`);
+        }
+        if (UNSAFE_STATIC_HEADER_PATTERN.test(header)) {
+          errors.push(`${source}.providers.${providerId}.http_headers.${header}: static headers must not contain credentials; use env_http_headers or auth`);
+        }
+        if (!stringValue(headerValue)) {
+          errors.push(`${source}.providers.${providerId}.http_headers.${header}: value must be a non-empty string`);
+        }
+        if (typeof headerValue === "string" && /\bBearer\s+/iu.test(headerValue)) {
+          errors.push(`${source}.providers.${providerId}.http_headers.${header}: bearer values must use env_http_headers or auth`);
+        }
+      }
+    }
   }
   if (provider.auth != null && !isObject(provider.auth)) {
     errors.push(`${source}.providers.${providerId}.auth: must be an object`);
+  } else if (provider.auth != null && provider.auth.command != null && !stringValue(provider.auth.command)) {
+    errors.push(`${source}.providers.${providerId}.auth.command: must be a non-empty string`);
   }
   if (provider.requires_openai_auth != null && typeof provider.requires_openai_auth !== "boolean") {
     errors.push(`${source}.providers.${providerId}.requires_openai_auth: must be boolean`);
