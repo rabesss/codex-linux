@@ -1470,6 +1470,42 @@ test("start conversation routing helper routes explicit providers without inject
   assert.equal(sandbox.official.config.model_provider, "openai");
 });
 
+test("turn start routing helper keeps explicit official payload models on the default provider", () => {
+  const sandbox = {
+    __codexLinuxCustomModelSlugs: new Set(["qa-direct-model"]),
+    __codexLinuxCustomModelProviders: new Map([["qa-direct-model", "qa_direct"]]),
+    __codexLinuxCustomModelProviderConfigs: new Map([
+      [
+        "qa_direct",
+        {
+          name: "QA Direct Provider",
+          base_url: "http://127.0.0.1:18080/v1",
+          wire_api: "responses",
+          env_key: "QA_DIRECT_API_KEY",
+        },
+      ],
+    ]),
+  };
+
+  vm.runInNewContext(
+    [
+      ROUTING_HELPER_SOURCE,
+      "official=codexLinuxCustomModelApplyRouting({model:`gpt-5.4`,config:{model_provider:`openai`},collaborationMode:{settings:{model:`qa-direct-model`}}},codexLinuxCustomModelRouteModel(`gpt-5.4`,`qa-direct-model`));",
+      "stale=codexLinuxCustomModelApplyRouting({config:{model_provider:`openai`},collaborationMode:{settings:{model:`qa-direct-model`}}},codexLinuxCustomModelRouteModel(void 0,`qa-direct-model`));",
+    ].join(""),
+    sandbox,
+  );
+
+  assert.equal(sandbox.official.model, "gpt-5.4");
+  assert.equal(sandbox.official.modelProvider, undefined);
+  assert.equal(sandbox.official.config.model_provider, "openai");
+  assert.equal(sandbox.official.config["model_providers.qa_direct"], undefined);
+  assert.equal(sandbox.stale.model, "qa-direct-model");
+  assert.equal(sandbox.stale.modelProvider, "qa_direct");
+  assert.equal(sandbox.stale.config.model_provider, "qa_direct");
+  assert.equal(sandbox.stale.config["model_providers.qa_direct"].env_key, "QA_DIRECT_API_KEY");
+});
+
 test("start conversation routing patch augments app-server conversation params", () => {
   const source = [
     "var Qg=5e3,$g=class{",
@@ -1655,7 +1691,7 @@ test("turn start routing patch recovers stale custom threads without provider se
   const patched = applyPatchTwice(applyCustomModelTurnStartRoutingPatch, source);
 
   assert.match(patched, /ge=codexLinuxCustomModelApplyRouting\(\{threadId:t/);
-  assert.match(patched, /\},C\?\?y\?\.settings\?\.model\),j=\{threadId:t/);
+  assert.match(patched, /\},codexLinuxCustomModelRouteModel\(C,y\?\.settings\?\.model\)\),j=\{threadId:t/);
   assert.match(patched, /sendRequest\(`turn\/start`,ge/);
 });
 
@@ -1668,8 +1704,21 @@ test("turn start routing patch rewrites legacy top-level-only routing hook", () 
   ].join("");
   const patched = applyPatchTwice(applyCustomModelTurnStartRoutingPatch, source);
 
-  assert.match(patched, /\},C\?\?y\?\.settings\?\.model\),j=\{threadId:t/);
+  assert.match(patched, /\},codexLinuxCustomModelRouteModel\(C,y\?\.settings\?\.model\)\),j=\{threadId:t/);
   assert.doesNotMatch(patched, /\},C\),j=\{threadId:t/);
+});
+
+test("turn start routing patch upgrades unsafe collaboration-mode fallback routing hook", () => {
+  const source = [
+    ROUTING_HELPER_SOURCE,
+    "async function submit(e,t,a){",
+    "let C=a.model,T=a.effort,he=a.serviceTier,pe=a.summary,fe=a.personality,y=a.collaborationMode,ae=a.cwd,o=a.clientUserMessageId,ue=!1,le=!1,O=null,re=null,de=null,se=null,h=`project`,ge=codexLinuxCustomModelApplyRouting({threadId:t,clientUserMessageId:o,input:a.input,cwd:ae,approvalPolicy:ue||le?O:null,approvalsReviewer:re,sandboxPolicy:de==null&&(ue||le)?se:null,permissions:de,model:C,serviceTier:he,effort:T,summary:pe,personality:fe,responsesapiClientMetadata:{...a.responsesapiClientMetadata,workspace_kind:h??`project`},outputSchema:a.outputSchema??null,collaborationMode:y??null,attachments:a.attachments??[]},C??y?.settings?.model),j={threadId:t,...a,clientUserMessageId:o,input:a.input,cwd:ae,approvalPolicy:O,approvalsReviewer:re,sandboxPolicy:se,permissions:de,model:C??null,serviceTier:he,effort:T??null,summary:pe,personality:fe,outputSchema:a.outputSchema??null,collaborationMode:y??null};",
+    "let n=await e.sendRequest(`turn/start`,ge,{timeoutMs:1});return n}",
+  ].join("");
+  const patched = applyPatchTwice(applyCustomModelTurnStartRoutingPatch, source);
+
+  assert.match(patched, /\},codexLinuxCustomModelRouteModel\(C,y\?\.settings\?\.model\)\),j=\{threadId:t/);
+  assert.doesNotMatch(patched, /\},C\?\?y\?\.settings\?\.model\),j=\{threadId:t/);
 });
 
 test("fork conversation routing leaves official models on the default provider", () => {
@@ -2145,7 +2194,7 @@ test("asset descriptor validation patches current bundles", () => {
       );
       assert.match(
         fs.readFileSync(path.join(assetsDir, "thread-context-inputs-test.js"), "utf8"),
-        /codexLinuxCustomModelApplyRouting\(\{threadId:t[\s\S]*\},C\?\?y\?\.settings\?\.model\),j=\{threadId:t/,
+        /codexLinuxCustomModelApplyRouting\(\{threadId:t[\s\S]*\},codexLinuxCustomModelRouteModel\(C,y\?\.settings\?\.model\)\),j=\{threadId:t/,
       );
       assert.match(
         fs.readFileSync(path.join(assetsDir, "thread-context-inputs-test.js"), "utf8"),

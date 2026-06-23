@@ -59,6 +59,7 @@ const ROUTING_HELPER_NAME = "codexLinuxCustomModelApplyRouting";
 const ROUTING_HELPER_SOURCE = [
   "function codexLinuxCustomModelSlugKey(e){return typeof e==`string`?e.trim().toLowerCase():``}",
   "function codexLinuxCustomModelCustomSlug(e){let t=codexLinuxCustomModelSlugKey(e);return t.length>0&&globalThis.__codexLinuxCustomModelSlugs?.has(t)===!0}",
+  "function codexLinuxCustomModelRouteModel(e,t){return codexLinuxCustomModelSlugKey(e).length>0?e:t}",
   "function codexLinuxCustomModelProviderForSlug(e){let t=codexLinuxCustomModelSlugKey(e);if(!t)return null;let n=globalThis.__codexLinuxCustomModelProviders?.get(t);return typeof n==`string`&&n.trim().length>0?n.trim():null}",
   "function codexLinuxCustomModelShimProviderConfig(){return{name:`Codex Shim`,base_url:`http://127.0.0.1:8765/v1`,wire_api:`responses`,experimental_bearer_token:`dummy`,request_max_retries:3,stream_max_retries:3,stream_idle_timeout_ms:600000}}",
   "function codexLinuxCustomModelProviderConfig(e){let t=globalThis.__codexLinuxCustomModelProviderConfigs?.get(e),n=t&&typeof t==`object`&&!Array.isArray(t)?t:null;return e===`codex_shim`?{...codexLinuxCustomModelShimProviderConfig(),...n}:n}",
@@ -105,7 +106,9 @@ const THREAD_SETTINGS_PROVIDER_RESUME_NEEDLE =
 const TURN_START_ROUTING_REGEX =
   /([A-Za-z_$][\w$]*)=\{threadId:[A-Za-z_$][\w$]*,clientUserMessageId:[\s\S]{0,1200}?model:([A-Za-z_$][\w$]*)[\s\S]{0,1200}?collaborationMode:([A-Za-z_$][\w$]*)\?\?null[\s\S]{0,1200}?attachments:[A-Za-z_$][\w$]*\.attachments\?\?\[\]\},([A-Za-z_$][\w$]*)=\{threadId:/u;
 const TURN_START_ROUTING_PATCHED_REGEX =
-  /[A-Za-z_$][\w$]*=codexLinuxCustomModelApplyRouting\(\{threadId:[\s\S]{0,1200}?collaborationMode:([A-Za-z_$][\w$]*)\?\?null[\s\S]{0,1200}?attachments:[A-Za-z_$][\w$]*\.attachments\?\?\[\]\},[A-Za-z_$][\w$]*\?\?\1\?\.settings\?\.model\),[A-Za-z_$][\w$]*=\{threadId:/u;
+  /[A-Za-z_$][\w$]*=codexLinuxCustomModelApplyRouting\(\{threadId:[A-Za-z_$][\w$]*,clientUserMessageId:[\s\S]{0,1200}?model:([A-Za-z_$][\w$]*)[\s\S]{0,1200}?collaborationMode:([A-Za-z_$][\w$]*)\?\?null[\s\S]{0,1200}?attachments:[A-Za-z_$][\w$]*\.attachments\?\?\[\]\},codexLinuxCustomModelRouteModel\(\1,\2\?\.settings\?\.model\)\),[A-Za-z_$][\w$]*=\{threadId:/u;
+const TURN_START_ROUTING_UNSAFE_FALLBACK_PATCHED_REGEX =
+  /([A-Za-z_$][\w$]*)=codexLinuxCustomModelApplyRouting\(\{threadId:[A-Za-z_$][\w$]*,clientUserMessageId:[\s\S]{0,1200}?model:([A-Za-z_$][\w$]*)[\s\S]{0,1200}?collaborationMode:([A-Za-z_$][\w$]*)\?\?null[\s\S]{0,1200}?attachments:[A-Za-z_$][\w$]*\.attachments\?\?\[\]\},\2\?\?\3\?\.settings\?\.model\),([A-Za-z_$][\w$]*)=\{threadId:/u;
 const TURN_START_ROUTING_LEGACY_PATCHED_REGEX =
   /([A-Za-z_$][\w$]*)=codexLinuxCustomModelApplyRouting\(\{threadId:[A-Za-z_$][\w$]*,clientUserMessageId:[\s\S]{0,1200}?model:([A-Za-z_$][\w$]*)[\s\S]{0,1200}?collaborationMode:([A-Za-z_$][\w$]*)\?\?null[\s\S]{0,1200}?attachments:[A-Za-z_$][\w$]*\.attachments\?\?\[\]\},\2\),([A-Za-z_$][\w$]*)=\{threadId:/u;
 const RESUME_SKIP_DYNAMIC_TOOLS_REGEX =
@@ -542,13 +545,23 @@ function applyCustomModelTurnStartRoutingPatch(source) {
   if (TURN_START_ROUTING_PATCHED_REGEX.test(source)) {
     return source;
   }
+  if (TURN_START_ROUTING_UNSAFE_FALLBACK_PATCHED_REGEX.test(source)) {
+    return source.replace(
+      TURN_START_ROUTING_UNSAFE_FALLBACK_PATCHED_REGEX,
+      (needle, _payloadVar, modelVar, collaborationModeVar, requestParamsVar) =>
+        needle.replace(
+          `},${modelVar}??${collaborationModeVar}?.settings?.model),${requestParamsVar}={threadId:`,
+          `},codexLinuxCustomModelRouteModel(${modelVar},${collaborationModeVar}?.settings?.model)),${requestParamsVar}={threadId:`,
+        ),
+    );
+  }
   if (TURN_START_ROUTING_LEGACY_PATCHED_REGEX.test(source)) {
     return source.replace(
       TURN_START_ROUTING_LEGACY_PATCHED_REGEX,
       (needle, _payloadVar, modelVar, collaborationModeVar, requestParamsVar) =>
         needle.replace(
           `},${modelVar}),${requestParamsVar}={threadId:`,
-          `},${modelVar}??${collaborationModeVar}?.settings?.model),${requestParamsVar}={threadId:`,
+          `},codexLinuxCustomModelRouteModel(${modelVar},${collaborationModeVar}?.settings?.model)),${requestParamsVar}={threadId:`,
         ),
     );
   }
@@ -570,7 +583,7 @@ function applyCustomModelTurnStartRoutingPatch(source) {
         .replace(`${payloadVar}={threadId:`, `${payloadVar}=codexLinuxCustomModelApplyRouting({threadId:`)
         .replace(
           `},${requestParamsVar}={threadId:`,
-          `},${modelVar}??${collaborationModeVar}?.settings?.model),${requestParamsVar}={threadId:`,
+          `},codexLinuxCustomModelRouteModel(${modelVar},${collaborationModeVar}?.settings?.model)),${requestParamsVar}={threadId:`,
         ),
   );
 }
