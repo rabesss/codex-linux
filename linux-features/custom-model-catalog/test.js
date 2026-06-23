@@ -1552,7 +1552,7 @@ test("start conversation routing helper routes explicit providers without inject
       ["cursor-zai-coding-glm-5-2", "z-ai/glm-5.2"],
     ]),
     __codexLinuxCustomModelCatalogPaths: new Map([
-      ["cursor-zai-coding-glm-5-2", "/tmp/codex-shim/custom_model_catalog.json"],
+      ["cursor-zai-coding-glm-5-2", "/fixture/codex-shim/custom_model_catalog.json"],
     ]),
   };
 
@@ -1578,7 +1578,7 @@ test("start conversation routing helper routes explicit providers without inject
   assert.equal(sandbox.shim.modelProvider, "codex_shim");
   assert.equal(sandbox.shim.config.model, "z-ai/glm-5.2");
   assert.equal(sandbox.shim.config.model_provider, "codex_shim");
-  assert.equal(sandbox.shim.config.model_catalog_json, "/tmp/codex-shim/custom_model_catalog.json");
+  assert.equal(sandbox.shim.config.model_catalog_json, "/fixture/codex-shim/custom_model_catalog.json");
   assert.equal(sandbox.shim.config["model_providers.codex_shim"].base_url, "http://127.0.0.1:8765/v1");
   assert.equal(sandbox.official.modelProvider, null);
   assert.equal(sandbox.official.config.model_provider, "openai");
@@ -1736,6 +1736,79 @@ test("fork conversation routing preserves Electron 42 thread source", () => {
   assert.match(patched, /threadSource:d/);
   assert.match(patched, /f\?\.latestModel\?\?f\?\.latestCollaborationMode\?\.settings\?\.model/);
   assert.match(patched, /\.\.\.p\.config==null\?\{\}:\{config:p\.config\}/);
+});
+
+test("fork and /goal routing helper preserves direct and shim provider payloads", () => {
+  const sandbox = {
+    __codexLinuxCustomModelSlugs: new Set([
+      "openrouter-qwen3-coder",
+      "cursor-zai-coding-glm-5-2",
+    ]),
+    __codexLinuxCustomModelProviders: new Map([
+      ["openrouter-qwen3-coder", "openrouter"],
+      ["cursor-zai-coding-glm-5-2", "codex_shim"],
+    ]),
+    __codexLinuxCustomModelProviderConfigs: new Map([
+      [
+        "openrouter",
+        {
+          name: "OpenRouter",
+          base_url: "https://openrouter.ai/api/v1",
+          wire_api: "responses",
+          env_key: "OPENROUTER_API_KEY",
+        },
+      ],
+    ]),
+    __codexLinuxCustomModelWireModels: new Map([
+      ["openrouter-qwen3-coder", "qwen/qwen3-coder"],
+      ["cursor-zai-coding-glm-5-2", "z-ai/glm-5.2"],
+    ]),
+    __codexLinuxCustomModelCatalogPaths: new Map([
+      ["cursor-zai-coding-glm-5-2", "/tmp/codex-shim/custom_model_catalog.json"],
+    ]),
+    directConversation: {
+      latestModel: "openrouter-qwen3-coder",
+      latestCollaborationMode: { settings: { model: "openrouter-qwen3-coder" } },
+    },
+    shimConversation: {
+      latestModel: "cursor-zai-coding-glm-5-2",
+      latestCollaborationMode: { settings: { model: "cursor-zai-coding-glm-5-2" } },
+    },
+    officialConversation: {
+      latestModel: "gpt-5.5",
+      latestCollaborationMode: { settings: { model: "gpt-5.5" } },
+    },
+  };
+
+  vm.runInNewContext(
+    [
+      ROUTING_HELPER_SOURCE,
+      "function forkPayload(conversation){",
+      "let routed=codexLinuxCustomModelApplyRouting({config:{model_provider:`openai`}},conversation.latestModel??conversation.latestCollaborationMode?.settings?.model??``);",
+      "return {threadId:`source-thread`,...routed.model==null?{}:{model:routed.model},...routed.modelProvider==null?{}:{modelProvider:routed.modelProvider},...routed.config==null?{}:{config:routed.config}}",
+      "}",
+      "direct=forkPayload(directConversation);",
+      "shim=forkPayload(shimConversation);",
+      "official=forkPayload(officialConversation);",
+    ].join(""),
+    sandbox,
+  );
+
+  assert.equal(sandbox.direct.model, "qwen/qwen3-coder");
+  assert.equal(sandbox.direct.modelProvider, "openrouter");
+  assert.equal(sandbox.direct.config.model, "qwen/qwen3-coder");
+  assert.equal(sandbox.direct.config.model_provider, "openrouter");
+  assert.equal(sandbox.direct.config["model_providers.openrouter"].env_key, "OPENROUTER_API_KEY");
+  assert.equal(sandbox.direct.config["model_providers.codex_shim"], undefined);
+  assert.equal(sandbox.shim.model, "z-ai/glm-5.2");
+  assert.equal(sandbox.shim.modelProvider, "codex_shim");
+  assert.equal(sandbox.shim.config.model, "z-ai/glm-5.2");
+  assert.equal(sandbox.shim.config.model_provider, "codex_shim");
+  assert.equal(sandbox.shim.config.model_catalog_json, "/tmp/codex-shim/custom_model_catalog.json");
+  assert.equal(sandbox.shim.config["model_providers.codex_shim"].base_url, "http://127.0.0.1:8765/v1");
+  assert.equal(sandbox.official.model, undefined);
+  assert.equal(sandbox.official.modelProvider, undefined);
+  assert.equal(sandbox.official.config.model_provider, "openai");
 });
 
 test("thread settings routing preserves custom provider on existing-thread model switches", () => {
