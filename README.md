@@ -258,8 +258,8 @@ codex-shim doctor
 | Custom models do not appear | Ensure `custom-model-catalog` is enabled, the custom catalog is readable or the optional shim catalog service is running, and official traffic is still configured to use the default OpenAI provider. |
 | Custom model names show `CLIProxyAPI / Cursor ...` in the main picker label | Update `codex-shim`, regenerate its Desktop catalog, restart `codex-shim.service`, then restart Codex Desktop. Current shim builds keep route metadata in `provider_display_name` instead of the primary label. |
 | The same custom model appears twice under the same provider | Regenerate the custom catalog, or update both repositories if using shim, and inspect the catalog source for duplicate visible provider/model pairs. Current builds de-duplicate those pairs before they reach the selector. |
-| Custom model grouping is missing or all rows appear under one provider | Check `provider_display_name` in `codex-shim`'s `/api/models` output and keep the generated description in the `<model> via <provider>.` shape; Desktop uses that as a fallback when upstream normalizes picker rows. |
-| A custom model shows the wrong context window | Update `codex-shim`, regenerate its Desktop catalog, restart the shim service, then restart Codex Desktop. |
+| Custom model grouping is missing or all rows appear under one provider | Check `provider_display_name` in the active custom catalog and keep the generated description in the `<model> via <provider>.` shape; Desktop uses that as a fallback when upstream normalizes picker rows. For shim rows, inspect `codex-shim`'s `/api/models` output. |
+| A custom model shows the wrong context window | Regenerate the active custom catalog and restart Codex Desktop. If the row uses the shim, also update `codex-shim`, regenerate its Desktop catalog, and restart the shim service. |
 | Unsure what state the install is in | Run `codex-desktop-doctor --json` and include that output in an issue. |
 
 More detail is in [Native setup](docs/native-setup.md),
@@ -273,8 +273,8 @@ is to keep a controlled, auditable port of the desktop app with clear feature
 boundaries:
 
 - official Codex/OpenAI account traffic stays on the first-party route;
-- custom provider routing belongs behind explicit opt-in wrappers such as
-  codex-shim;
+- custom provider routing belongs behind explicit opt-in provider config, with
+  codex-shim available as an optional adapter for rows that need it;
 - Linux-only integrations live behind a feature framework instead of being
   silently enabled for every user;
 - local assistive backends such as Computer Use are owned, reviewed source in
@@ -393,7 +393,8 @@ and an agent prompt users can hand to their assistant.
 
 Enable `custom-model-catalog` when provider-aware custom rows should appear
 beside official models. The Desktop feature owns UI and session routing. A
-shared catalog owns row metadata, and the optional shim owns CLIProxyAPI/local
+shared catalog owns row metadata. Direct and local rows use their own
+`[model_providers.<id>]` config, while the optional shim owns CLIProxyAPI/local
 adapter protocol translation for rows that use `codex_shim`.
 
 Current builds preserve `model`, `modelProvider`, provider configuration, and

@@ -28,10 +28,10 @@
 | Custom rows show `CLIProxyAPI / Cursor ...` in the main model name | Update `codex-shim`, regenerate the Desktop catalog, restart `codex-shim.service`, and restart Desktop. Current shim builds keep route provenance in provider metadata, not the primary label. |
 | The same custom model appears twice under the same provider | Regenerate the custom catalog, or update both repositories if using shim, and inspect the catalog for duplicate `(provider_display_name, display_name)` rows. Current builds collapse those visible duplicates before the selector renders. |
 | Custom groups are absent but custom rows appear | Confirm each row has `provider_display_name` or the generated description shape `<display_name> via <provider_display_name>.`; Desktop uses the description fallback when upstream dropdown normalization strips custom fields. |
-| A custom thread works until Desktop restarts | Keep `[model_providers.codex_shim]` defined in Codex config while leaving top-level `model_provider = "openai"` |
+| A custom thread works until Desktop restarts | Keep the selected row's durable `[model_providers.<id>]` entry defined in Codex config while leaving top-level `model_provider = "openai"`. For shim rows, that provider id is usually `codex_shim`. |
 | `/goal` or a forked custom thread stops reaching the shim | Rebuild from current `main`. Older builds could drop `modelProvider` during `thread/fork`; current builds preserve provider config and dynamic tools |
 | An existing thread keeps sending to the old provider after a model switch | Rebuild from current `main`. Current builds force a provider resume when a thread crosses the official/custom provider boundary. For an already-stale thread, close and reopen Desktop after updating. |
-| Custom model returns `unsupported call` for a Browser namespace tool | Update both repositories. Desktop must expose/forward dynamic tools; `codex-shim` must preserve native item `type`, restore flat/nested MCP `namespace` and `name`, and the selected row must advertise `supports_tools` only if the provider is verified tool-capable |
+| Custom model returns `unsupported call` for a Browser namespace tool | Rebuild from current `main` so Desktop exposes and forwards dynamic tools. If the row uses the shim, also update `codex-shim`; it must preserve native item `type`, restore flat/nested MCP `namespace` and `name`, and the selected row must advertise `supports_tools` only if the provider is verified tool-capable. |
 | Custom model tries native `web_search` or `computer_use` as a normal function | Use an official row for hosted native web search/computer-use semantics, or expose a real executable MCP/function fallback for the custom model. Current shim builds do not fake these hosted tools as BYOK functions |
 | CommandCode custom rows fail with `Unsupported model provider: commandcode` | Regenerate the shim model matrix. Current shim builds also normalize stale CommandCode rows to the local CLIProxyAPI route |
 | Custom model context footer or compaction threshold is wrong | Regenerate the custom catalog, or update `codex-shim` and run `codex-shim desktop write-models` if using shim, then restart Desktop so the feature CLI wrapper rebuilds the merged app-server catalog. Check the active custom catalog source and `$XDG_STATE_HOME/codex-desktop/custom-model-catalog/merged-model-catalog.json` for `context_window` and `auto_compact_token_limit`. |
@@ -74,9 +74,10 @@ systemctl --user status codex-update-manager.service
 For custom-model routing also check:
 
 ```bash
-codex-shim status
-curl -s http://127.0.0.1:8765/health
-curl -s http://127.0.0.1:8765/api/models
+node scripts/validate-custom-model-catalog.js "${CODEX_HOME:-$HOME/.codex}/custom-models.json"
+codex-shim status                         # only for shim-backed rows
+curl -s http://127.0.0.1:8765/health      # only for shim-backed rows
+curl -s http://127.0.0.1:8765/api/models  # only for shim-backed rows
 ```
 
 See [Custom models](custom-models.md) and

@@ -42,8 +42,7 @@ If dependencies are already installed:
 make install-native
 ```
 
-For the maintained custom-model Desktop package, install the companion
-`codex-shim` first, then run:
+For the maintained custom-model Desktop package, run:
 
 ```bash
 make install-custom-models
@@ -52,6 +51,8 @@ make install-custom-models
 This uses `profiles/custom-models/features.json` and keeps official
 OpenAI/Codex traffic on the first-party provider while enabling custom rows for
 the Desktop model picker.
+Direct provider rows do not require `codex-shim`; install and run the shim only
+for shim or CLIProxyAPI-backed catalog rows.
 
 ## Guided Setup
 

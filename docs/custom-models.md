@@ -33,6 +33,22 @@ through their declared non-default provider. See OpenAI's
 [OSS mode documentation](https://developers.openai.com/codex/config-advanced#oss-mode-local-providers)
 for the local Ollama/LM Studio flow.
 
+## Choose A Path
+
+All custom-model paths use the same Desktop catalog contract. Choose the
+provider path per row; do not change the global Codex default away from
+`openai`.
+
+| Path | Use it when | Required pieces |
+|---|---|---|
+| Direct provider | The upstream provider already has an OpenAI-compatible Responses or Chat endpoint. | `custom-model-catalog` Desktop build, a catalog row with `model_provider`, and a matching `[model_providers.<id>]` entry using `env_key`, `env_http_headers`, or command-backed `auth`. |
+| Local provider | You run a local OpenAI-compatible server such as LM Studio or Ollama and want it in the Desktop picker. | `custom-model-catalog` Desktop build, a local catalog row, and a local `[model_providers.<id>]` entry. For CLI-only local testing, Codex `--oss` remains a separate path and does not require this Desktop catalog. |
+| Shim / CLIProxyAPI adapter | You need codex-shim discovery, protocol translation, tool-call repair, CLIProxyAPI routing, or shim-maintained context metadata. | Current codex-shim, a `codex_shim` provider entry, and either a shim catalog file or loopback catalog URL. |
+
+Direct and local provider rows do not require codex-shim. Shim-backed rows
+remain supported, but CLIProxyAPI is not a public prerequisite for custom
+models.
+
 ## Setup
 
 1. Install the maintained custom-model Desktop profile:
@@ -364,10 +380,11 @@ Then verify through Desktop:
   update `codex-shim`, regenerate the Desktop catalog, restart the shim
   service, and restart Desktop. Current shim builds reserve that information
   for provider metadata and keep primary labels route-neutral.
-- If the same custom model appears twice under the same provider, update both
-  repositories and inspect the active catalog source for duplicate
-  `(provider_display_name, display_name)` rows. Current shim builds collapse
-  those duplicates before Desktop merges the catalog.
+- If the same custom model appears twice under the same provider, regenerate
+  the active catalog and inspect it for duplicate
+  `(provider_display_name, display_name)` rows. If the row comes from the shim,
+  update both repositories; current shim builds collapse those duplicates
+  before Desktop merges the catalog.
 - If grouping is wrong, inspect the row's `provider_display_name` in the custom
   catalog; Desktop groups from that field and falls back to the generated
   `<display_name> via <provider_display_name>.` description when the renderer
