@@ -115,6 +115,9 @@ environments do not lose window targeting accidentally. For debugging, set
 `CODEX_COMPUTER_USE_WINDOW_BACKENDS=hyprland,sway` with a comma-separated list
 of backend ids to force a specific order.
 
+Maintainers adding or changing backend adapters should use
+[Computer Use Backend Maintenance](computer-use-backend-maintenance.md).
+
 | Desktop/compositor | Window list | Exact focus | Targeted screenshot path | Notes |
 | --- | --- | --- | --- | --- |
 | GNOME Shell extension | yes | yes | full screenshot, then verified crop | Run `setup_window_targeting` when GNOME Introspect cannot focus exact windows. |
