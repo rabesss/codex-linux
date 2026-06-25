@@ -57,7 +57,7 @@ validate_managed_codex_cli() {
     local probe
 
     [ -x "$launcher_path" ] || return 1
-    probe="$("$launcher_path" --version 2>/dev/null || true)"
+    probe="$("$launcher_path" --version 2>&1 || true)"
     case "$probe" in
         codex-cli\ *|codex\ *)
             return 0
@@ -103,6 +103,10 @@ ensure_managed_codex_cli() {
     fi
 
     write_managed_codex_cli_launcher "$package_root" "$launcher_path"
-    validate_managed_codex_cli "$launcher_path" || error "Bundled Codex CLI failed validation: $launcher_path"
+    if ! validate_managed_codex_cli "$launcher_path"; then
+        local probe
+        probe="$("$launcher_path" --version 2>&1 || true)"
+        error "Bundled Codex CLI failed validation: $launcher_path${probe:+ ($probe)}"
+    fi
     info "Managed Codex CLI ready: $launcher_path"
 }

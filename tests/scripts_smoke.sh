@@ -2568,6 +2568,8 @@ SCRIPT
     assert_contains "$REPO_DIR/install.sh" "ensure_managed_codex_cli"
     assert_contains "$REPO_DIR/install.sh" '[ ! -x "$INSTALL_DIR/resources/bin/codex" ]'
     assert_contains "$REPO_DIR/scripts/lib/codex-cli-runtime.sh" "CODEX_BUNDLED_CODEX_CLI_VERSION"
+    assert_contains "$REPO_DIR/flake.nix" "codexNodejs = pkgs.nodejs_22"
+    assert_contains "$REPO_DIR/flake.nix" 'export CODEX_BUNDLED_CODEX_CLI_SOURCE="${codexCliPackageRoot}"'
     assert_contains "$REPO_DIR/launcher/start.sh.template" '$SCRIPT_DIR/resources/bin/codex'
     assert_contains "$REPO_DIR/launcher/start.sh.template" "ensure_short_tmpdir_for_unix_sockets"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "codex-ipc/ipc-"

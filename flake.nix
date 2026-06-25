@@ -52,6 +52,7 @@
             })
           ];
         };
+        codexNodejs = pkgs.nodejs_22;
         flakeSourceCommit = self.rev or (self.dirtyRev or "");
         flakeSourceDateEpoch = toString (self.lastModified or 1);
         sourceRoot = pkgs.lib.cleanSourceWith {
@@ -198,7 +199,7 @@
 
         nativeModulesNodeModules = pkgs.importNpmLock.buildNodeModules {
           npmRoot = ./nix/native-modules;
-          inherit (pkgs) nodejs;
+          nodejs = codexNodejs;
           derivationArgs = {
             npmRebuildFlags = [ "--ignore-scripts" ];
           };
@@ -213,7 +214,7 @@
             pkgs.bash
             pkgs.gcc
             pkgs.gnumake
-            pkgs.nodejs
+            codexNodejs
             pkgs.python3
           ];
 
@@ -450,7 +451,7 @@ PY
             pkgs.gnumake
             pkgs.gnused
             pkgs.makeWrapper
-            pkgs.nodejs
+            codexNodejs
             pkgs.asar
             pkgs._7zz
             pkgs.patchelf
@@ -481,7 +482,7 @@ PY
             export CFLAGS="''${CFLAGS:-} -ffile-prefix-map=$TMPDIR=/build -fdebug-prefix-map=$TMPDIR=/build -fmacro-prefix-map=$TMPDIR=/build"
             export CXXFLAGS="''${CXXFLAGS:-} -ffile-prefix-map=$TMPDIR=/build -fdebug-prefix-map=$TMPDIR=/build -fmacro-prefix-map=$TMPDIR=/build"
             export RUSTFLAGS="''${RUSTFLAGS:-} --remap-path-prefix=$TMPDIR=/build -C link-arg=-Wl,--build-id=none"
-            export CODEX_MANAGED_NODE_SOURCE="${pkgs.nodejs}"
+            export CODEX_MANAGED_NODE_SOURCE="${codexNodejs}"
             export CODEX_BUNDLED_CODEX_CLI_SOURCE="${codexCliPackageRoot}"
             export CODEX_LINUX_FEATURES_CONFIG="${linuxFeaturesConfig linuxFeatureIds}"
             export CODEX_ELECTRON_ZIP_SOURCE="${electronZip}"
@@ -547,10 +548,10 @@ PY
             cp -aT "$src/opt/codex-desktop" "$out/opt/codex-desktop"
             chmod -R u+w "$out/opt/codex-desktop"
             rm -rf "$out/opt/codex-desktop/resources/node-runtime"
-            ln -s ${pkgs.nodejs} "$out/opt/codex-desktop/resources/node-runtime"
+            ln -s ${codexNodejs} "$out/opt/codex-desktop/resources/node-runtime"
             if [ -e "$out/opt/codex-desktop/update-builder/node-runtime" ]; then
               rm -rf "$out/opt/codex-desktop/update-builder/node-runtime"
-              ln -s ${pkgs.nodejs} "$out/opt/codex-desktop/update-builder/node-runtime"
+              ln -s ${codexNodejs} "$out/opt/codex-desktop/update-builder/node-runtime"
             fi
 
             resources_dir="$out/opt/codex-desktop/resources"
@@ -613,7 +614,7 @@ PY
           name = "codex-desktop-installer";
           runtimeInputs = [
             pkgs.bash
-            pkgs.nodejs
+            codexNodejs
             pkgs.python3
             pkgs._7zz
             pkgs.curl
@@ -641,7 +642,8 @@ PY
 
             cd "$source_dir"
             export CODEX_INSTALL_DIR="''${CODEX_INSTALL_DIR:-$root_dir/codex-app}"
-            export CODEX_MANAGED_NODE_SOURCE="${pkgs.nodejs}"
+            export CODEX_MANAGED_NODE_SOURCE="${codexNodejs}"
+            export CODEX_BUNDLED_CODEX_CLI_SOURCE="${codexCliPackageRoot}"
             ${pkgs.bash}/bin/bash "$source_dir/install.sh" "$source_dir/Codex.dmg" "$@"
 
             install_dir="''${CODEX_INSTALL_DIR:-$root_dir/codex-app}"
@@ -675,7 +677,7 @@ PY
 
         devShells.default = pkgs.mkShell {
           packages = [
-            pkgs.nodejs
+            codexNodejs
             pkgs.python3
             pkgs._7zz
             pkgs.curl
