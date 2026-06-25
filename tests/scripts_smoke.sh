@@ -2025,6 +2025,51 @@ SCRIPT
     assert_contains "$launcher_path" '../codex-cli/node_modules/@openai/codex/bin/codex.js'
 }
 
+test_managed_codex_cli_source_install() {
+    info "Checking managed Codex CLI prebuilt source install"
+    local workspace="$TMP_DIR/managed-codex-cli-source"
+    local runtime_dir="$workspace/node-runtime"
+    local source_root="$workspace/source"
+    local package_root="$workspace/codex-cli"
+    local launcher_path="$workspace/bin/codex"
+
+    mkdir -p "$runtime_dir/bin" "$source_root/node_modules/@openai/codex/bin"
+    cat > "$runtime_dir/bin/node" <<'SCRIPT'
+#!/usr/bin/env bash
+case "${1:-}" in
+    */node_modules/@openai/codex/bin/codex.js)
+        if [ "${2:-}" = "--version" ]; then
+            echo "codex-cli 9.9.9"
+            exit 0
+        fi
+        exit 2
+        ;;
+    *)
+        exit 2
+        ;;
+esac
+SCRIPT
+    chmod +x "$runtime_dir/bin/node"
+    printf '%s\n' 'throw new Error("fake codex.js should be executed by fake node");' \
+        > "$source_root/node_modules/@openai/codex/bin/codex.js"
+
+    (
+        CODEX_MANAGED_NODE_RUNTIME_DIR="$runtime_dir"
+        CODEX_BUNDLED_CODEX_CLI_SOURCE="$source_root"
+        info() { echo "[INFO] $*" >&2; }
+        error() { echo "[ERROR] $*" >&2; exit 1; }
+        source "$REPO_DIR/scripts/lib/codex-cli-runtime.sh"
+        ensure_managed_codex_cli "$package_root" "$launcher_path"
+        "$launcher_path" --version
+    ) > "$workspace/output.log" 2>&1
+
+    assert_file_exists "$launcher_path"
+    assert_file_exists "$package_root/node_modules/@openai/codex/bin/codex.js"
+    assert_contains "$workspace/output.log" "Copying bundled Codex CLI package source: $source_root"
+    assert_contains "$workspace/output.log" "codex-cli 9.9.9"
+    assert_not_contains "$workspace/output.log" "missing npm"
+}
+
 test_managed_codex_cli_install_retries_registry_fetches() {
     info "Checking managed Codex CLI npm registry fetch retries"
     local workspace="$TMP_DIR/managed-codex-cli-install"
@@ -5603,6 +5648,7 @@ main() {
     test_managed_node_runtime_source_install
     test_managed_node_runtime_rejects_version_only_stub
     test_managed_codex_cli_launcher
+    test_managed_codex_cli_source_install
     test_managed_codex_cli_install_retries_registry_fetches
     test_better_sqlite3_electron_42_source_patch
     test_v8_nullptr_workaround_skips_when_included_probe_succeeds

@@ -85,6 +85,7 @@
         };
 
         codexVersion = "26.616.81150";
+        codexCliVersion = "0.141.0";
         electronVersion = "42.1.0";
         electronPlatform =
           {
@@ -112,6 +113,38 @@
           url = "https://persistent.oaistatic.com/codex-primary-runtime/26.426.12240/codex-primary-runtime-linux-x64-26.426.12240.tar.xz";
           hash = "sha256-21Yk6276NrZuxvbdBIjO+5ZuSWNoYqq2IJpDNsHKkMQ=";
         };
+
+        codexCliNpmPackage = pkgs.fetchurl {
+          url = "https://registry.npmjs.org/@openai/codex/-/codex-${codexCliVersion}.tgz";
+          hash = "sha256-mtVwhJR30hc4bXQOLjQt449tZO8LyrmJEbFDfDD8Cc8=";
+        };
+
+        codexCliPlatform =
+          {
+            x86_64-linux = {
+              npmVersion = "${codexCliVersion}-linux-x64";
+              hash = "sha256-sfN+kL0WaMVNZQbfUybrVErluy9Fv1vhMuT/7sK1uJ4=";
+            };
+            aarch64-linux = {
+              npmVersion = "${codexCliVersion}-linux-arm64";
+              hash = "sha256-mQ3uQCQrN7pTqc05txztNZucdWRiXYM+gLb56YLadrc=";
+            };
+          }.${system} or (throw "Codex CLI Nix package is not supported on ${system}");
+
+        codexCliNpmPlatformPackage = pkgs.fetchurl {
+          url = "https://registry.npmjs.org/@openai/codex/-/codex-${codexCliPlatform.npmVersion}.tgz";
+          hash = codexCliPlatform.hash;
+        };
+
+        codexCliPackageRoot = pkgs.runCommandLocal "codex-cli-package-root-${codexCliVersion}-${system}" {
+          nativeBuildInputs = [ pkgs.gnutar ];
+        } ''
+          mkdir -p "$out/node_modules/@openai/codex" "$TMPDIR/codex-cli" "$TMPDIR/codex-cli-platform"
+          tar -xzf ${codexCliNpmPackage} -C "$TMPDIR/codex-cli"
+          tar -xzf ${codexCliNpmPlatformPackage} -C "$TMPDIR/codex-cli-platform"
+          cp -a "$TMPDIR/codex-cli/package/." "$out/node_modules/@openai/codex/"
+          cp -a "$TMPDIR/codex-cli-platform/package/vendor" "$out/node_modules/@openai/codex/vendor"
+        '';
 
         browserUseNodeRepl = if system == "x86_64-linux" then pkgs.stdenv.mkDerivation {
           pname = "codex-browser-use-node-repl";
@@ -449,6 +482,7 @@ PY
             export CXXFLAGS="''${CXXFLAGS:-} -ffile-prefix-map=$TMPDIR=/build -fdebug-prefix-map=$TMPDIR=/build -fmacro-prefix-map=$TMPDIR=/build"
             export RUSTFLAGS="''${RUSTFLAGS:-} --remap-path-prefix=$TMPDIR=/build -C link-arg=-Wl,--build-id=none"
             export CODEX_MANAGED_NODE_SOURCE="${pkgs.nodejs}"
+            export CODEX_BUNDLED_CODEX_CLI_SOURCE="${codexCliPackageRoot}"
             export CODEX_LINUX_FEATURES_CONFIG="${linuxFeaturesConfig linuxFeatureIds}"
             export CODEX_ELECTRON_ZIP_SOURCE="${electronZip}"
             export CODEX_NATIVE_MODULES_SOURCE="${codexNativeModules}"

@@ -219,6 +219,7 @@ dmg_better_sqlite3_version="$(json_file_field "$ASAR_EXTRACT_DIR/node_modules/be
 dmg_node_pty_version="$(json_file_field "$ASAR_EXTRACT_DIR/node_modules/node-pty/package.json" "value.version")"
 
 nix_codex_version="$(read_nix_string codexVersion)"
+nix_codex_cli_version="$(read_nix_string codexCliVersion)"
 nix_electron_version="$(read_nix_string electronVersion)"
 native_electron_version="$(node -p "require('$REPO_DIR/nix/native-modules/package.json').dependencies.electron")"
 native_better_sqlite3_version="$(node -p "require('$REPO_DIR/nix/native-modules/package.json').dependencies['better-sqlite3']")"
@@ -255,6 +256,20 @@ assert_equal "Electron version pin" "$dmg_electron_version" "$nix_electron_versi
 assert_equal "native-modules Electron pin" "$nix_electron_version" "$native_electron_version"
 assert_equal "native-modules better-sqlite3 pin" "$dmg_better_sqlite3_version" "$native_better_sqlite3_version"
 assert_equal "native-modules node-pty pin" "$dmg_node_pty_version" "$native_node_pty_version"
+
+installer_codex_cli_version="$(python3 - "$REPO_DIR/scripts/lib/codex-cli-runtime.sh" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+text = Path(sys.argv[1]).read_text()
+match = re.search(r'CODEX_BUNDLED_CODEX_CLI_VERSION="\$\{CODEX_BUNDLED_CODEX_CLI_VERSION:-([^}"]+)\}"', text)
+if not match:
+    raise SystemExit("Could not find bundled Codex CLI default version")
+print(match.group(1))
+PY
+)"
+assert_equal "Codex CLI version pin" "$installer_codex_cli_version" "$nix_codex_cli_version"
 
 flake_node_repl_url="$(read_nix_fetchurl_field browserUseNodeReplRuntime url)"
 flake_node_repl_sri="$(read_nix_fetchurl_field browserUseNodeReplRuntime hash)"

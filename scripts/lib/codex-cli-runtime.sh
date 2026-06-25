@@ -13,6 +13,16 @@ managed_codex_cli_package_ready() {
     [ -f "$package_root/node_modules/@openai/codex/bin/codex.js" ]
 }
 
+copy_managed_codex_cli_source() {
+    local source_root="$1"
+    local package_root="$2"
+
+    [ -d "$source_root/node_modules/@openai/codex" ] || error "Bundled Codex CLI source is missing @openai/codex: $source_root"
+    mkdir -p "$package_root"
+    cp -R "$source_root/." "$package_root/"
+    chmod -R u+w "$package_root"
+}
+
 write_managed_codex_cli_launcher() {
     local package_root="$1"
     local launcher_path="$2"
@@ -69,22 +79,27 @@ ensure_managed_codex_cli() {
     fi
 
     [ -n "${CODEX_MANAGED_NODE_RUNTIME_DIR:-}" ] || error "Managed Node.js runtime must be prepared before staging Codex CLI"
-    npm_bin="$CODEX_MANAGED_NODE_RUNTIME_DIR/bin/npm"
-    [ -x "$npm_bin" ] || error "Managed Node.js runtime is missing npm: $npm_bin"
-
     mkdir -p "$package_root"
     if ! managed_codex_cli_package_ready "$package_root"; then
-        info "Installing bundled Codex CLI package: $CODEX_BUNDLED_CODEX_CLI_PACKAGE"
-        "$npm_bin" install \
-            --prefix "$package_root" \
-            --omit=dev \
-            --no-audit \
-            --no-fund \
-            "--fetch-retries=$CODEX_BUNDLED_CODEX_CLI_FETCH_RETRIES" \
-            "--fetch-retry-factor=$CODEX_BUNDLED_CODEX_CLI_FETCH_RETRY_FACTOR" \
-            "--fetch-retry-mintimeout=$CODEX_BUNDLED_CODEX_CLI_FETCH_RETRY_MINTIMEOUT" \
-            "--fetch-retry-maxtimeout=$CODEX_BUNDLED_CODEX_CLI_FETCH_RETRY_MAXTIMEOUT" \
-            "$CODEX_BUNDLED_CODEX_CLI_PACKAGE"
+        if [ -n "${CODEX_BUNDLED_CODEX_CLI_SOURCE:-}" ]; then
+            info "Copying bundled Codex CLI package source: $CODEX_BUNDLED_CODEX_CLI_SOURCE"
+            copy_managed_codex_cli_source "$CODEX_BUNDLED_CODEX_CLI_SOURCE" "$package_root"
+        else
+            npm_bin="$CODEX_MANAGED_NODE_RUNTIME_DIR/bin/npm"
+            [ -x "$npm_bin" ] || error "Managed Node.js runtime is missing npm: $npm_bin"
+
+            info "Installing bundled Codex CLI package: $CODEX_BUNDLED_CODEX_CLI_PACKAGE"
+            "$npm_bin" install \
+                --prefix "$package_root" \
+                --omit=dev \
+                --no-audit \
+                --no-fund \
+                "--fetch-retries=$CODEX_BUNDLED_CODEX_CLI_FETCH_RETRIES" \
+                "--fetch-retry-factor=$CODEX_BUNDLED_CODEX_CLI_FETCH_RETRY_FACTOR" \
+                "--fetch-retry-mintimeout=$CODEX_BUNDLED_CODEX_CLI_FETCH_RETRY_MINTIMEOUT" \
+                "--fetch-retry-maxtimeout=$CODEX_BUNDLED_CODEX_CLI_FETCH_RETRY_MAXTIMEOUT" \
+                "$CODEX_BUNDLED_CODEX_CLI_PACKAGE"
+        fi
     fi
 
     write_managed_codex_cli_launcher "$package_root" "$launcher_path"
