@@ -68,7 +68,7 @@ validate_managed_codex_cli() {
     [ -x "$launcher_path" ] || return 1
     probe="$("$launcher_path" --version 2>&1 || true)"
     case "$probe" in
-        codex-cli\ *|codex\ *)
+        codex-cli\ *|codex\ *|*$'\n'codex-cli\ *|*$'\n'codex\ *)
             return 0
             ;;
         *)

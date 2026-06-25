@@ -2041,6 +2041,7 @@ test_managed_codex_cli_source_install() {
 case "${1:-}" in
     */node_modules/@openai/codex/bin/codex.js)
         if [ "${2:-}" = "--version" ]; then
+            echo 'WARNING: proceeding, even though we could not create PATH aliases:'
             echo "codex-cli 9.9.9"
             exit 0
         fi
@@ -2068,6 +2069,7 @@ SCRIPT
     assert_file_exists "$launcher_path"
     assert_file_exists "$package_root/node_modules/@openai/codex/bin/codex.js"
     assert_contains "$workspace/output.log" "Copying bundled Codex CLI package source: $source_root"
+    assert_contains "$workspace/output.log" "WARNING: proceeding"
     assert_contains "$workspace/output.log" "codex-cli 9.9.9"
     assert_not_contains "$workspace/output.log" "missing npm"
 }
