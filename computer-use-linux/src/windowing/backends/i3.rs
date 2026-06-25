@@ -291,6 +291,7 @@ impl I3Node {
 
         Some(WindowInfo {
             window_id,
+            backend_window_id: None,
             title,
             app_id,
             wm_class,

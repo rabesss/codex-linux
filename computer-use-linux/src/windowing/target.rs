@@ -3,7 +3,7 @@ use crate::windowing::types::{WindowFocusResult, WindowInfo, WindowTarget};
 use anyhow::{bail, Result};
 use tokio::time::{sleep, Duration};
 
-const FOCUS_VERIFY_ATTEMPTS: usize = 6;
+const FOCUS_VERIFY_ATTEMPTS: usize = 20;
 const FOCUS_VERIFY_DELAY: Duration = Duration::from_millis(50);
 
 pub async fn list_windows() -> Result<Vec<WindowInfo>> {

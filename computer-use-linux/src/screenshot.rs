@@ -1,4 +1,5 @@
 use crate::diagnostics::hydrate_session_bus_env;
+use crate::windowing::types::WindowBounds;
 use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use futures_util::StreamExt;
@@ -8,6 +9,7 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
+    process::Command,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use zbus::{
@@ -26,6 +28,20 @@ pub struct ScreenshotCapture {
     pub source: String,
     pub width: u32,
     pub height: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_x: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_y: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordinate_space: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cropped_to_window: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_window_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_backend_window_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus_verified: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +62,31 @@ pub async fn capture_screenshot() -> Result<ScreenshotCapture> {
             )),
         },
     }
+}
+
+pub async fn capture_region_with_grim(bounds: &WindowBounds) -> Result<ScreenshotCapture> {
+    let (x, y, width, height) = window_region(bounds)?;
+    let geometry = grim_geometry(x, y, width, height);
+    let path = temp_png_path("hyprland-grim-window");
+    let output = Command::new("grim")
+        .args(["-g", geometry.as_str()])
+        .arg(&path)
+        .output()
+        .with_context(|| format!("failed to run grim -g {geometry}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        let _ = fs::remove_file(&path);
+        bail!("grim -g {geometry} failed: {detail}");
+    }
+
+    read_png_as_capture(
+        path.clone(),
+        "hyprland-grim-window",
+        ScreenshotCleanup::DeletePath(path),
+    )
+    .await
 }
 
 async fn capture_with_gnome_shell() -> Result<ScreenshotCapture> {
@@ -203,7 +244,31 @@ fn read_png_as_capture_inner(path: &Path, source: &str) -> Result<ScreenshotCapt
         source: source.to_string(),
         width,
         height,
+        origin_x: None,
+        origin_y: None,
+        coordinate_space: None,
+        cropped_to_window: None,
+        target_window_id: None,
+        target_backend_window_id: None,
+        focus_verified: None,
     })
+}
+
+pub(crate) fn window_region(bounds: &WindowBounds) -> Result<(i32, i32, u32, u32)> {
+    let x = bounds.x.context("target window bounds are missing x")?;
+    let y = bounds.y.context("target window bounds are missing y")?;
+    if bounds.width == 0 || bounds.height == 0 {
+        bail!(
+            "target window bounds have invalid size {}x{}",
+            bounds.width,
+            bounds.height
+        );
+    }
+    Ok((x, y, bounds.width, bounds.height))
+}
+
+pub(crate) fn grim_geometry(x: i32, y: i32, width: u32, height: u32) -> String {
+    format!("{x},{y} {width}x{height}")
 }
 
 fn cleanup_gnome_requested_path(path: &Path) {
@@ -311,6 +376,37 @@ mod tests {
         let png = valid_png(3840, 1080);
 
         assert_eq!(png_dimensions(&png).unwrap(), (3840, 1080));
+    }
+
+    #[test]
+    fn formats_grim_window_geometry() {
+        assert_eq!(grim_geometry(6, 51, 2548, 1383), "6,51 2548x1383");
+        assert_eq!(grim_geometry(-1920, 0, 1920, 1080), "-1920,0 1920x1080");
+    }
+
+    #[test]
+    fn rejects_window_region_without_origin_or_size() {
+        let missing_origin = WindowBounds {
+            x: None,
+            y: Some(0),
+            width: 800,
+            height: 600,
+        };
+        assert!(window_region(&missing_origin)
+            .unwrap_err()
+            .to_string()
+            .contains("missing x"));
+
+        let empty = WindowBounds {
+            x: Some(0),
+            y: Some(0),
+            width: 0,
+            height: 600,
+        };
+        assert!(window_region(&empty)
+            .unwrap_err()
+            .to_string()
+            .contains("invalid size"));
     }
 
     #[tokio::test]

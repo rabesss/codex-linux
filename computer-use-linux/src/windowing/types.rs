@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct WindowInfo {
     pub window_id: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_window_id: Option<String>,
     pub title: Option<String>,
     pub app_id: Option<String>,
     pub wm_class: Option<String>,

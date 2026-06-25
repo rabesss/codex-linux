@@ -337,6 +337,7 @@ mod tests {
     fn terminal_window(window_id: u64, pid: u32) -> WindowInfo {
         WindowInfo {
             window_id,
+            backend_window_id: None,
             title: Some("Ghostty".to_string()),
             app_id: Some("com.mitchellh.ghostty.desktop".to_string()),
             wm_class: Some("com.mitchellh.ghostty".to_string()),

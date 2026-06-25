@@ -7,7 +7,8 @@ the in-app Computer Use controls are disabled until you opt in.
 It supports:
 
 - app listing and accessibility trees through AT-SPI
-- screenshots through GNOME Shell DBus or XDG Desktop Portal
+- screenshots through GNOME Shell DBus, XDG Desktop Portal, or Hyprland `grim`
+  region capture for verified targeted windows
 - window listing and focusing on GNOME, KWin/Plasma, Hyprland, COSMIC, and i3
 - keyboard, text, click, scroll, and drag input through `/dev/uinput`, XDG
   RemoteDesktop portal, or `ydotool`
@@ -55,6 +56,51 @@ or screenshots:
 - sway/wlroots: `xdg-desktop-portal-wlr`
 - Hyprland: `xdg-desktop-portal-hyprland`
 - GNOME: usually available by default
+
+Hyprland targeted window screenshots also use `grim` when available:
+
+```bash
+# Debian / Ubuntu
+sudo apt install grim
+
+# Fedora
+sudo dnf install grim
+
+# Arch / Manjaro
+sudo pacman -S grim
+
+# openSUSE
+sudo zypper install grim
+```
+
+## Targeted Window Safety
+
+When a screenshot targets a window on Hyprland, the backend focuses the target
+with `hyprctl`, verifies the focused native window address with a fresh
+compositor query, then captures the exact window region with `grim -g`. If that
+verified region capture fails, the targeted screenshot fails closed. It does not
+silently return full-screen or active-window pixels while labeling them as the
+requested target.
+
+For Hyprland 0.55+ Lua configs, the backend activates windows through
+`hl.dsp.focus({ window = "address:0x..." })`; older `focuswindow` dispatch is
+kept as a compatibility fallback for pre-Lua Hyprland.
+
+Targeted window screenshots return crop metadata:
+
+- `origin_x` and `origin_y`: the global desktop origin of the crop
+- `coordinate_space`: `window-local` for a cropped window image, `global` for a
+  full-screen image
+- `target_window_id` and `target_backend_window_id`: the resolved compositor
+  target
+- `focus_verified`: whether exact target-window focus was verified before
+  capture
+
+Explicit click, scroll, and drag coordinates are interpreted in the coordinate
+space of the latest screenshot. For a cropped targeted screenshot, the backend
+translates those window-local pixels back to global desktop coordinates and
+re-verifies the cached target window before sending pointer input. AT-SPI
+element-index actions keep using their global accessibility bounds.
 
 ## Verify Readiness
 

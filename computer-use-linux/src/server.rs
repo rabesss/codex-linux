@@ -11,14 +11,16 @@ use crate::remote_desktop::{
     type_text_with_keysyms, PointerButton, PortalKeyboardSession, PortalPointerSession,
     ScrollDirection,
 };
-use crate::screenshot::{capture_screenshot, ScreenshotCapture};
+use crate::screenshot::{
+    capture_region_with_grim, capture_screenshot, window_region, ScreenshotCapture,
+};
 use crate::windowing::registry;
 use crate::windows::{
     focus_window_target, focused_window, list_windows, resolve_window_target,
     window_permission_hint, WindowFocusResult, WindowInfo, WindowTarget,
     GNOME_SHELL_INTROSPECT_BACKEND,
 };
-use anyhow::Result;
+use anyhow::{bail, Result};
 use rmcp::{
     handler::server::wrapper::{Json, Parameters},
     model::{CallToolResult, Content},
@@ -40,10 +42,25 @@ use std::{
 #[derive(Clone, Default)]
 pub struct ComputerUseLinux {
     last_nodes: Arc<Mutex<Vec<AccessibilityNode>>>,
+    last_screenshot_context: Arc<Mutex<Option<ScreenshotContext>>>,
     portal_pointer_session: Arc<Mutex<Option<PortalPointerSession>>>,
     portal_keyboard_session: Arc<Mutex<Option<PortalKeyboardSession>>>,
     /// Lazily-created uinput absolute pointer (preferred coordinate backend).
     abs_pointer: Arc<Mutex<Option<crate::abs_pointer::AbsPointer>>>,
+}
+
+#[derive(Debug, Clone)]
+struct ScreenshotContext {
+    origin_x: i32,
+    origin_y: i32,
+    width: u32,
+    height: u32,
+    target_window_id: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+struct CapturedScreenshot {
+    capture: ScreenshotCapture,
 }
 
 #[tool_router]
@@ -233,8 +250,13 @@ impl ComputerUseLinux {
             .resolve_accessibility_app_filter(&params, window_context.as_ref())
             .await;
         let (screenshot, screenshot_error) = if include_screenshot {
-            match capture_screenshot().await {
-                Ok(capture) => (Some(capture), None),
+            let target = params.window_target();
+            let target = target.has_target().then_some(target);
+            match self
+                .capture_for_window_target(target.as_ref(), true, false)
+                .await
+            {
+                Ok(capture) => (Some(capture.capture), None),
                 Err(error) => (None, Some(error.to_string())),
             }
         } else {
@@ -325,48 +347,30 @@ impl ComputerUseLinux {
         Parameters(params): Parameters<ScreenshotParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let target = params.window_target();
-
-        // When targeting a window, raise it first (so it isn't occluded) and
-        // resolve its bounds so we can crop to just that window.
-        let mut crop: Option<crate::windowing::WindowBounds> = None;
-        let mut window_label: Option<String> = None;
-        if let Some(target) = &target {
-            if params.raise_window.unwrap_or(true) {
-                let _ = focus_window_target(target).await;
-                tokio::time::sleep(Duration::from_millis(250)).await;
-            }
-            if !params.full_screen.unwrap_or(false) {
-                if let Ok(windows) = list_windows().await {
-                    if let Ok(window) = resolve_window_target(&windows, target) {
-                        crop = window.bounds.clone();
-                        window_label = window.title.clone();
-                    }
-                }
-            }
-        }
-
-        let capture = capture_screenshot()
+        let capture = self
+            .capture_for_window_target(
+                target.as_ref(),
+                params.raise_window.unwrap_or(true),
+                params.full_screen.unwrap_or(false),
+            )
             .await
             .map_err(|e| ErrorData::internal_error(format!("screenshot failed: {e}"), None))?;
+        let capture = capture.capture;
         let raw =
             decode_data_url(&capture.data_url).map_err(|e| ErrorData::internal_error(e, None))?;
 
-        let (png, width, height, cropped) = match crop.as_ref().and_then(window_crop_rect) {
-            Some((x, y, w, h)) => match crop_png(&raw, x, y, w, h) {
-                Ok((bytes, cw, ch)) => (bytes, cw, ch, true),
-                // If cropping fails, fall back to the full frame rather than erroring.
-                Err(_) => (raw, capture.width, capture.height, false),
-            },
-            None => (raw, capture.width, capture.height, false),
-        };
-
-        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &png);
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &raw);
         let caption = serde_json::json!({
-            "width": width,
-            "height": height,
+            "width": capture.width,
+            "height": capture.height,
             "source": capture.source,
-            "cropped_to_window": cropped,
-            "window_title": window_label,
+            "cropped_to_window": capture.cropped_to_window.unwrap_or(false),
+            "origin_x": capture.origin_x,
+            "origin_y": capture.origin_y,
+            "coordinate_space": capture.coordinate_space,
+            "target_window_id": capture.target_window_id,
+            "target_backend_window_id": capture.target_backend_window_id,
+            "focus_verified": capture.focus_verified,
         });
         Ok(CallToolResult::success(vec![
             Content::image(b64, "image/png".to_string()),
@@ -490,8 +494,29 @@ impl ComputerUseLinux {
                 }),
             };
         }
-        let ClickTarget::Coordinates(x, y) = target else {
+        let ClickTarget::Coordinates {
+            x,
+            y,
+            from_screenshot_context,
+        } = target
+        else {
             unreachable!("click target must resolve to coordinates or an AT-SPI action");
+        };
+        let focus = if from_screenshot_context {
+            match self.focus_last_screenshot_target_for_input().await {
+                Ok(focus) => focus,
+                Err(message) => {
+                    return Json(ActionOutput {
+                        ok: false,
+                        implemented: true,
+                        action: "click".to_string(),
+                        message,
+                        received,
+                    });
+                }
+            }
+        } else {
+            None
         };
         let button = mouse_button_code(params.button.as_deref());
         let click_count = params.click_count.unwrap_or(1).clamp(1, 10).to_string();
@@ -510,13 +535,12 @@ impl ComputerUseLinux {
             .await
             == Some(true)
         {
-            return Json(ActionOutput {
-                ok: true,
-                implemented: true,
-                action: "click".to_string(),
-                message: "Action sent through the uinput absolute pointer.".to_string(),
+            return Json(successful_action_with_focus(
+                "click",
+                "Action sent through the uinput absolute pointer.",
                 received,
-            });
+                focus.clone(),
+            ));
         }
         if let Some(session) = self.cached_portal_pointer_session() {
             match portal_click(
@@ -529,13 +553,12 @@ impl ComputerUseLinux {
             .await
             {
                 Ok(()) => {
-                    return Json(ActionOutput {
-                        ok: true,
-                        implemented: true,
-                        action: "click".to_string(),
-                        message: "Action sent through the remote desktop portal.".to_string(),
+                    return Json(successful_action_with_focus(
+                        "click",
+                        "Action sent through the remote desktop portal.",
                         received,
-                    });
+                        focus.clone(),
+                    ));
                 }
                 Err(_) => self.clear_portal_pointer_session(),
             }
@@ -551,13 +574,12 @@ impl ComputerUseLinux {
                 .await
                 {
                     Ok(()) => {
-                        return Json(ActionOutput {
-                            ok: true,
-                            implemented: true,
-                            action: "click".to_string(),
-                            message: "Action sent through the remote desktop portal.".to_string(),
+                        return Json(successful_action_with_focus(
+                            "click",
+                            "Action sent through the remote desktop portal.",
                             received,
-                        });
+                            focus.clone(),
+                        ));
                     }
                     Err(_) => self.clear_portal_pointer_session(),
                 },
@@ -574,7 +596,7 @@ impl ComputerUseLinux {
                 button,
             ],
         ]);
-        Json(action_result("click", result, received))
+        Json(action_result_with_focus("click", result, received, focus))
     }
 
     #[tool(
@@ -679,6 +701,30 @@ impl ComputerUseLinux {
                     });
                 }
             };
+        let explicit_point = params.x.zip(params.y).is_some();
+        let (target_point, from_screenshot_context) = match target_point {
+            Some((x, y)) if explicit_point => {
+                let (point, from_screenshot_context) = self.translate_screenshot_point(x, y);
+                (Some(point), from_screenshot_context)
+            }
+            point => (point, false),
+        };
+        let focus = if from_screenshot_context {
+            match self.focus_last_screenshot_target_for_input().await {
+                Ok(focus) => focus,
+                Err(message) => {
+                    return Json(ActionOutput {
+                        ok: false,
+                        implemented: true,
+                        action: "scroll".to_string(),
+                        message,
+                        received,
+                    });
+                }
+            }
+        } else {
+            None
+        };
         let direction = match params.direction.to_ascii_lowercase().as_str() {
             "up" => ScrollDirection::Up,
             "down" => ScrollDirection::Down,
@@ -699,32 +745,30 @@ impl ComputerUseLinux {
         if let Some(session) = self.cached_portal_pointer_session() {
             match portal_scroll(&session, target_point, direction, units).await {
                 Ok(()) => {
-                    return Json(ActionOutput {
-                        ok: true,
-                        implemented: true,
-                        action: "scroll".to_string(),
-                        message: "Action sent through the remote desktop portal.".to_string(),
+                    return Json(successful_action_with_focus(
+                        "scroll",
+                        "Action sent through the remote desktop portal.",
                         received,
-                    });
+                        focus.clone(),
+                    ));
                 }
                 Err(_) => self.clear_portal_pointer_session(),
             }
         } else if self.should_prefer_portal_pointer_backend() {
             match self.ensure_portal_pointer_session().await {
-                Ok(Some(session)) => match portal_scroll(&session, target_point, direction, units)
-                    .await
-                {
-                    Ok(()) => {
-                        return Json(ActionOutput {
-                            ok: true,
-                            implemented: true,
-                            action: "scroll".to_string(),
-                            message: "Action sent through the remote desktop portal.".to_string(),
-                            received,
-                        });
+                Ok(Some(session)) => {
+                    match portal_scroll(&session, target_point, direction, units).await {
+                        Ok(()) => {
+                            return Json(successful_action_with_focus(
+                                "scroll",
+                                "Action sent through the remote desktop portal.",
+                                received,
+                                focus.clone(),
+                            ));
+                        }
+                        Err(_) => self.clear_portal_pointer_session(),
                     }
-                    Err(_) => self.clear_portal_pointer_session(),
-                },
+                }
                 Ok(None) => {}
                 Err(_) => {}
             }
@@ -751,7 +795,7 @@ impl ComputerUseLinux {
         }
         sequence.push(wheel_mousemove_args(dx, dy));
         let result = run_ydotool_sequence(&sequence);
-        Json(action_result("scroll", result, received))
+        Json(action_result_with_focus("scroll", result, received, focus))
     }
 
     #[tool(
@@ -766,14 +810,34 @@ impl ComputerUseLinux {
     )]
     async fn drag(&self, Parameters(params): Parameters<DragParams>) -> Json<ActionOutput> {
         let received = Some(serde_json::json!(params));
+        let ((start_x, start_y), start_from_screenshot_context) =
+            self.translate_screenshot_point(params.start_x, params.start_y);
+        let ((end_x, end_y), end_from_screenshot_context) =
+            self.translate_screenshot_point(params.end_x, params.end_y);
+        let focus = if start_from_screenshot_context || end_from_screenshot_context {
+            match self.focus_last_screenshot_target_for_input().await {
+                Ok(focus) => focus,
+                Err(message) => {
+                    return Json(ActionOutput {
+                        ok: false,
+                        implemented: true,
+                        action: "drag".to_string(),
+                        message,
+                        received,
+                    });
+                }
+            }
+        } else {
+            None
+        };
         // Preferred backend: the uinput absolute pointer (accurate landing).
         if self.ensure_abs_pointer().await {
             let dragged = {
                 if let Ok(mut guard) = self.abs_pointer.lock() {
                     guard.as_mut().map(|p| {
                         p.drag(
-                            (params.start_x, params.start_y),
-                            (params.end_x, params.end_y),
+                            (start_x, start_y),
+                            (end_x, end_y),
                             crate::abs_pointer::PointerButton::Left,
                         )
                         .is_ok()
@@ -783,69 +847,52 @@ impl ComputerUseLinux {
                 }
             };
             if dragged == Some(true) {
-                return Json(ActionOutput {
-                    ok: true,
-                    implemented: true,
-                    action: "drag".to_string(),
-                    message: "Action sent through the uinput absolute pointer.".to_string(),
+                return Json(successful_action_with_focus(
+                    "drag",
+                    "Action sent through the uinput absolute pointer.",
                     received,
-                });
+                    focus,
+                ));
             }
         }
         if let Some(session) = self.cached_portal_pointer_session() {
-            match portal_drag(
-                &session,
-                params.start_x,
-                params.start_y,
-                params.end_x,
-                params.end_y,
-            )
-            .await
-            {
+            match portal_drag(&session, start_x, start_y, end_x, end_y).await {
                 Ok(()) => {
-                    return Json(ActionOutput {
-                        ok: true,
-                        implemented: true,
-                        action: "drag".to_string(),
-                        message: "Action sent through the remote desktop portal.".to_string(),
+                    return Json(successful_action_with_focus(
+                        "drag",
+                        "Action sent through the remote desktop portal.",
                         received,
-                    });
+                        focus.clone(),
+                    ));
                 }
                 Err(_) => self.clear_portal_pointer_session(),
             }
         } else if self.should_prefer_portal_pointer_backend() {
             match self.ensure_portal_pointer_session().await {
-                Ok(Some(session)) => match portal_drag(
-                    &session,
-                    params.start_x,
-                    params.start_y,
-                    params.end_x,
-                    params.end_y,
-                )
-                .await
-                {
-                    Ok(()) => {
-                        return Json(ActionOutput {
-                            ok: true,
-                            implemented: true,
-                            action: "drag".to_string(),
-                            message: "Action sent through the remote desktop portal.".to_string(),
-                            received,
-                        });
+                Ok(Some(session)) => {
+                    match portal_drag(&session, start_x, start_y, end_x, end_y).await {
+                        Ok(()) => {
+                            return Json(successful_action_with_focus(
+                                "drag",
+                                "Action sent through the remote desktop portal.",
+                                received,
+                                focus.clone(),
+                            ));
+                        }
+                        Err(_) => self.clear_portal_pointer_session(),
                     }
-                    Err(_) => self.clear_portal_pointer_session(),
-                },
+                }
                 Ok(None) => {}
                 Err(_) => {}
             }
         }
         let result = run_ydotool_sequence(&[
-            absolute_mousemove_args(params.start_x, params.start_y),
+            absolute_mousemove_args(start_x, start_y),
             vec!["click".to_string(), "0x40".to_string()],
-            absolute_mousemove_args(params.end_x, params.end_y),
+            absolute_mousemove_args(end_x, end_y),
             vec!["click".to_string(), "0x80".to_string()],
         ]);
-        Json(action_result("drag", result, received))
+        Json(action_result_with_focus("drag", result, received, focus))
     }
 
     #[tool(
@@ -1507,6 +1554,183 @@ impl ComputerUseLinux {
         candidates.into_iter().next()
     }
 
+    async fn capture_for_window_target(
+        &self,
+        target: Option<&WindowTarget>,
+        raise_window: bool,
+        full_screen: bool,
+    ) -> Result<CapturedScreenshot> {
+        let Some(target) = target else {
+            let mut capture = capture_screenshot().await?;
+            mark_global_capture(&mut capture);
+            self.cache_screenshot_context(&capture);
+            return Ok(CapturedScreenshot { capture });
+        };
+
+        let mut focus = None;
+        if raise_window {
+            let verified_focus = focus_window_target(target).await?;
+            if !focus_satisfies_target(&verified_focus, target) {
+                let required = if target.requires_exact_focus() {
+                    "exact target-window focus"
+                } else {
+                    "app-level focus"
+                };
+                bail!(
+                    "targeted screenshot requires {required}; requested window_id {}, focused window_id {:?}",
+                    verified_focus.requested_window.window_id,
+                    verified_focus
+                        .focused_window
+                        .as_ref()
+                        .map(|window| window.window_id)
+                );
+            }
+            focus = Some(verified_focus);
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        } else if !full_screen {
+            bail!(
+                "targeted window screenshots require raise_window=true so focus and pixels can be verified"
+            );
+        }
+
+        if full_screen {
+            let mut capture = capture_screenshot().await?;
+            mark_global_capture(&mut capture);
+            if let Some(focus) = &focus {
+                capture.target_window_id = Some(focus.requested_window.window_id);
+                capture.target_backend_window_id = focus.requested_window.backend_window_id.clone();
+                capture.focus_verified = Some(focus.exact_window_focused);
+            }
+            self.cache_screenshot_context(&capture);
+            return Ok(CapturedScreenshot { capture });
+        }
+
+        let windows = list_windows().await?;
+        let window = resolve_window_target(&windows, target)?.clone();
+        let capture = self.capture_target_window(&window, focus.as_ref()).await?;
+        self.cache_screenshot_context(&capture);
+        Ok(CapturedScreenshot { capture })
+    }
+
+    async fn capture_target_window(
+        &self,
+        window: &WindowInfo,
+        focus: Option<&WindowFocusResult>,
+    ) -> Result<ScreenshotCapture> {
+        if focus.is_none() {
+            bail!("targeted window screenshot requires verified focus");
+        }
+
+        if window.backend == registry::HYPRLAND_BACKEND
+            && focus.is_some_and(|item| !item.exact_window_focused)
+        {
+            bail!(
+                "Hyprland targeted screenshot requires exact focus; requested window_id {}, focused window_id {:?}",
+                window.window_id,
+                focus.and_then(|item| item.focused_window.as_ref().map(|focused| focused.window_id))
+            );
+        }
+
+        let bounds = window
+            .bounds
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("target window has no known bounds"))?;
+        let focus_verified = focus.is_some_and(|item| item.exact_window_focused);
+
+        let capture = if window.backend == registry::HYPRLAND_BACKEND {
+            capture_region_with_grim(bounds).await?
+        } else {
+            self.capture_and_crop_window(bounds).await?
+        };
+
+        annotate_window_capture(capture, window, bounds, focus_verified)
+    }
+
+    async fn capture_and_crop_window(
+        &self,
+        bounds: &crate::windowing::WindowBounds,
+    ) -> Result<ScreenshotCapture> {
+        let capture = capture_screenshot().await?;
+        let raw = decode_data_url(&capture.data_url).map_err(|error| anyhow::anyhow!(error))?;
+        let (x, y, width, height) = window_region(bounds)?;
+        let (png, cropped_width, cropped_height) =
+            crop_png(&raw, x, y, width, height).map_err(|error| anyhow::anyhow!(error))?;
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &png);
+        Ok(ScreenshotCapture {
+            mime_type: "image/png".to_string(),
+            data_url: format!("data:image/png;base64,{b64}"),
+            source: format!("{}-window-crop", capture.source),
+            width: cropped_width,
+            height: cropped_height,
+            origin_x: None,
+            origin_y: None,
+            coordinate_space: None,
+            cropped_to_window: None,
+            target_window_id: None,
+            target_backend_window_id: None,
+            focus_verified: None,
+        })
+    }
+
+    fn cache_screenshot_context(&self, capture: &ScreenshotCapture) {
+        let context = if capture.coordinate_space.as_deref() == Some("window-local") {
+            capture
+                .origin_x
+                .zip(capture.origin_y)
+                .map(|(origin_x, origin_y)| ScreenshotContext {
+                    origin_x,
+                    origin_y,
+                    width: capture.width,
+                    height: capture.height,
+                    target_window_id: capture.target_window_id,
+                })
+        } else {
+            None
+        };
+
+        if let Ok(mut cached) = self.last_screenshot_context.lock() {
+            *cached = context;
+        }
+    }
+
+    fn translate_screenshot_point(&self, x: i32, y: i32) -> ((i32, i32), bool) {
+        let Ok(cached) = self.last_screenshot_context.lock() else {
+            return ((x, y), false);
+        };
+        let Some(context) = cached.as_ref() else {
+            return ((x, y), false);
+        };
+        if x < 0 || y < 0 || x as u32 >= context.width || y as u32 >= context.height {
+            return ((x, y), false);
+        }
+        ((context.origin_x + x, context.origin_y + y), true)
+    }
+
+    fn last_screenshot_target(&self) -> Option<WindowTarget> {
+        let cached = self.last_screenshot_context.lock().ok()?;
+        Some(WindowTarget {
+            window_id: cached.as_ref()?.target_window_id,
+            pid: None,
+            tty: None,
+            terminal_pid: None,
+            terminal_command: None,
+            terminal_cwd: None,
+            app_id: None,
+            wm_class: None,
+            title: None,
+        })
+        .filter(|target| target.has_target())
+    }
+
+    async fn focus_last_screenshot_target_for_input(
+        &self,
+    ) -> std::result::Result<Option<WindowFocusResult>, String> {
+        let Some(target) = self.last_screenshot_target() else {
+            return Ok(None);
+        };
+        self.focus_target_for_input(&target).await
+    }
+
     async fn focus_target_for_input(
         &self,
         target: &WindowTarget,
@@ -1572,7 +1796,12 @@ impl ComputerUseLinux {
         params: &ClickParams,
     ) -> std::result::Result<ClickTarget, String> {
         if let Some((x, y)) = params.x.zip(params.y) {
-            return Ok(ClickTarget::Coordinates(x, y));
+            let ((x, y), from_screenshot_context) = self.translate_screenshot_point(x, y);
+            return Ok(ClickTarget::Coordinates {
+                x,
+                y,
+                from_screenshot_context,
+            });
         }
 
         let selector = params.selector();
@@ -1583,7 +1812,11 @@ impl ComputerUseLinux {
         )?;
 
         if let Some((x, y)) = node.bounds.as_ref().and_then(bounds_center) {
-            return Ok(ClickTarget::Coordinates(x, y));
+            return Ok(ClickTarget::Coordinates {
+                x,
+                y,
+                from_screenshot_context: false,
+            });
         }
 
         if !is_plain_left_click(params.button.as_deref(), params.click_count) {
@@ -1726,7 +1959,11 @@ impl ComputerUseLinux {
 
 #[derive(Debug)]
 enum ClickTarget {
-    Coordinates(i32, i32),
+    Coordinates {
+        x: i32,
+        y: i32,
+        from_screenshot_context: bool,
+    },
     PrimaryAction {
         object_ref: String,
         action_name: Option<String>,
@@ -2124,6 +2361,30 @@ fn env_contains(key: &str, needle: &str) -> bool {
         .is_some_and(|value| value.to_ascii_lowercase().contains(needle))
 }
 
+fn mark_global_capture(capture: &mut ScreenshotCapture) {
+    capture.origin_x = Some(0);
+    capture.origin_y = Some(0);
+    capture.coordinate_space = Some("global".to_string());
+    capture.cropped_to_window = Some(false);
+}
+
+fn annotate_window_capture(
+    mut capture: ScreenshotCapture,
+    window: &WindowInfo,
+    bounds: &crate::windowing::WindowBounds,
+    focus_verified: bool,
+) -> Result<ScreenshotCapture> {
+    let (origin_x, origin_y, _, _) = window_region(bounds)?;
+    capture.origin_x = Some(origin_x);
+    capture.origin_y = Some(origin_y);
+    capture.coordinate_space = Some("window-local".to_string());
+    capture.cropped_to_window = Some(true);
+    capture.target_window_id = Some(window.window_id);
+    capture.target_backend_window_id = window.backend_window_id.clone();
+    capture.focus_verified = Some(focus_verified);
+    Ok(capture)
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 struct ScreenshotParams {
     #[serde(default)]
@@ -2178,17 +2439,6 @@ fn decode_data_url(data_url: &str) -> std::result::Result<Vec<u8>, String> {
         .map_err(|e| format!("invalid screenshot base64: {e}"))
 }
 
-/// Convert a window's bounds into a crop rectangle, if it has a usable origin
-/// and non-zero size.
-fn window_crop_rect(bounds: &crate::windowing::WindowBounds) -> Option<(i32, i32, u32, u32)> {
-    let x = bounds.x?;
-    let y = bounds.y?;
-    if bounds.width == 0 || bounds.height == 0 {
-        return None;
-    }
-    Some((x, y, bounds.width, bounds.height))
-}
-
 /// Crop a PNG image to `(x, y, w, h)` (clamped to the image), returning the
 /// re-encoded PNG and the actual cropped dimensions.
 fn crop_png(
@@ -2202,13 +2452,20 @@ fn crop_png(
     let img = image::load_from_memory_with_format(raw, image::ImageFormat::Png)
         .map_err(|e| format!("decode png: {e}"))?;
     let (iw, ih) = (img.width(), img.height());
-    let x = x.max(0) as u32;
-    let y = y.max(0) as u32;
-    if x >= iw || y >= ih {
+    if x < 0 || y < 0 {
         return Err("crop origin outside image".into());
     }
-    let w = w.min(iw - x);
-    let h = h.min(ih - y);
+    let x = x as u32;
+    let y = y as u32;
+    let right = x
+        .checked_add(w)
+        .ok_or_else(|| "crop width overflows image coordinates".to_string())?;
+    let bottom = y
+        .checked_add(h)
+        .ok_or_else(|| "crop height overflows image coordinates".to_string())?;
+    if x >= iw || y >= ih || right > iw || bottom > ih {
+        return Err("crop rectangle outside image".into());
+    }
     let sub = img.crop_imm(x, y, w, h);
     let mut out = Vec::new();
     sub.write_to(&mut Cursor::new(&mut out), image::ImageFormat::Png)
@@ -2770,6 +3027,7 @@ mod tests {
     ) -> WindowInfo {
         WindowInfo {
             window_id,
+            backend_window_id: None,
             title: title.map(str::to_string),
             app_id: app_id.map(str::to_string),
             wm_class: wm_class.map(str::to_string),
@@ -2786,6 +3044,106 @@ mod tests {
             client_type: Some("wayland".to_string()),
             backend: GNOME_SHELL_EXTENSION_BACKEND.to_string(),
             terminal: None,
+        }
+    }
+
+    fn capture_with_context(
+        origin_x: i32,
+        origin_y: i32,
+        width: u32,
+        height: u32,
+        target_window_id: Option<u64>,
+    ) -> ScreenshotCapture {
+        ScreenshotCapture {
+            mime_type: "image/png".to_string(),
+            data_url: "data:image/png;base64,".to_string(),
+            source: "test-window-crop".to_string(),
+            width,
+            height,
+            origin_x: Some(origin_x),
+            origin_y: Some(origin_y),
+            coordinate_space: Some("window-local".to_string()),
+            cropped_to_window: Some(true),
+            target_window_id,
+            target_backend_window_id: Some("0x2a".to_string()),
+            focus_verified: Some(true),
+        }
+    }
+
+    #[tokio::test]
+    async fn targeted_window_screenshot_rejects_unverified_raise_false_capture() {
+        let server = ComputerUseLinux::default();
+        let error = server
+            .capture_for_window_target(
+                Some(&WindowTarget {
+                    wm_class: Some("kitty".to_string()),
+                    ..Default::default()
+                }),
+                false,
+                false,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("raise_window=true"));
+    }
+
+    #[test]
+    fn crop_png_rejects_out_of_frame_window_regions() {
+        let raw = {
+            let img = image::DynamicImage::new_rgba8(32, 32);
+            let mut out = Vec::new();
+            img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+                .unwrap();
+            out
+        };
+
+        assert!(crop_png(&raw, -1, 0, 10, 10)
+            .unwrap_err()
+            .contains("outside image"));
+        assert!(crop_png(&raw, 24, 24, 16, 16)
+            .unwrap_err()
+            .contains("outside image"));
+    }
+
+    #[test]
+    fn translates_points_from_cached_window_screenshot_context() {
+        let server = ComputerUseLinux::default();
+        server.cache_screenshot_context(&capture_with_context(6, 51, 2548, 1383, Some(42)));
+
+        assert_eq!(server.translate_screenshot_point(10, 20), ((16, 71), true));
+        assert_eq!(
+            server.translate_screenshot_point(3000, 20),
+            ((3000, 20), false)
+        );
+
+        let target = server.last_screenshot_target().unwrap();
+        assert_eq!(target.window_id, Some(42));
+    }
+
+    #[test]
+    fn explicit_click_coordinates_use_window_screenshot_context() {
+        let server = ComputerUseLinux::default();
+        server.cache_screenshot_context(&capture_with_context(100, 200, 800, 600, Some(42)));
+
+        let target = server
+            .resolve_click_target(&ClickParams {
+                x: Some(12),
+                y: Some(34),
+                ..Default::default()
+            })
+            .unwrap();
+
+        match target {
+            ClickTarget::Coordinates {
+                x,
+                y,
+                from_screenshot_context,
+            } => {
+                assert_eq!((x, y), (112, 234));
+                assert!(from_screenshot_context);
+            }
+            ClickTarget::PrimaryAction { .. } => panic!("expected translated coordinates"),
         }
     }
 
@@ -3141,7 +3499,7 @@ mod tests {
                 assert_eq!(object_ref, ":1.7/org/a11y/atspi/accessible/7");
                 assert_eq!(action_name.as_deref(), Some("Click"));
             }
-            ClickTarget::Coordinates(_, _) => {
+            ClickTarget::Coordinates { .. } => {
                 panic!("expected AT-SPI primary-action fallback")
             }
         }
@@ -3181,7 +3539,7 @@ mod tests {
                 assert_eq!(object_ref, ":1.7/org/a11y/atspi/accessible/7");
                 assert_eq!(action_name.as_deref(), Some("Click"));
             }
-            ClickTarget::Coordinates(_, _) => {
+            ClickTarget::Coordinates { .. } => {
                 panic!("expected AT-SPI primary-action fallback")
             }
         }
@@ -3506,6 +3864,13 @@ mod tests {
             })
             .unwrap();
 
-        assert!(matches!(target, ClickTarget::Coordinates(60, 40)));
+        assert!(matches!(
+            target,
+            ClickTarget::Coordinates {
+                x: 60,
+                y: 40,
+                from_screenshot_context: false
+            }
+        ));
     }
 }

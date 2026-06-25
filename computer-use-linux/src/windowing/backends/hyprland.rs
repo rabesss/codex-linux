@@ -67,6 +67,19 @@ pub fn list_windows() -> Result<Vec<WindowInfo>> {
     parse_hyprland_clients(&String::from_utf8_lossy(&output.stdout))
 }
 
+pub fn focused_window() -> Result<Option<WindowInfo>> {
+    let output =
+        hyprctl_output(&["activewindow", "-j"]).context("failed to run hyprctl activewindow -j")?;
+    if !output.status.success() {
+        bail!(
+            "hyprctl activewindow -j failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    parse_hyprland_active_window(&String::from_utf8_lossy(&output.stdout))
+}
+
 pub(crate) fn parse_hyprland_clients(json: &str) -> Result<Vec<WindowInfo>> {
     let clients: Vec<HyprlandClient> =
         serde_json::from_str(json).context("failed to parse hyprctl clients -j output")?;
@@ -81,18 +94,44 @@ pub(crate) fn parse_hyprland_clients(json: &str) -> Result<Vec<WindowInfo>> {
     Ok(windows)
 }
 
+pub(crate) fn parse_hyprland_active_window(json: &str) -> Result<Option<WindowInfo>> {
+    let value: serde_json::Value =
+        serde_json::from_str(json).context("failed to parse hyprctl activewindow -j output")?;
+    if value.as_object().is_none_or(|object| object.is_empty()) {
+        return Ok(None);
+    }
+
+    let client: HyprlandClient =
+        serde_json::from_value(value).context("failed to parse active Hyprland window")?;
+    if client.address.trim().is_empty() {
+        return Ok(None);
+    }
+
+    let mut window = WindowInfo::try_from(client)?;
+    window.focused = true;
+    Ok(Some(window))
+}
+
 pub fn activate_window(window_id: u64) -> Result<()> {
     let address = format!("address:0x{window_id:x}");
-    let output = hyprctl_output(&["dispatch", "focuswindow", &address])
-        .with_context(|| format!("failed to run hyprctl dispatch focuswindow {address}"))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        bail!(
-            "hyprctl dispatch focuswindow {address} failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
+    let lua_dispatch = hyprland_lua_focus_window_dispatch(&address);
+    let modern = hyprctl_output(&["dispatch", &lua_dispatch])
+        .with_context(|| format!("failed to run hyprctl dispatch {lua_dispatch}"))?;
+    if hyprctl_dispatch_succeeded(&modern) {
+        return Ok(());
     }
+
+    let legacy = hyprctl_output(&["dispatch", "focuswindow", &address])
+        .with_context(|| format!("failed to run hyprctl dispatch focuswindow {address}"))?;
+    if hyprctl_dispatch_succeeded(&legacy) {
+        return Ok(());
+    }
+
+    bail!(
+        "Hyprland window activation failed for {address}; lua dispatch: {}; legacy dispatch: {}",
+        hyprctl_output_detail(&modern),
+        hyprctl_output_detail(&legacy),
+    );
 }
 
 fn hyprctl_output(args: &[&str]) -> std::io::Result<std::process::Output> {
@@ -180,6 +219,36 @@ fn xdg_runtime_dir() -> Option<PathBuf> {
     Some(PathBuf::from(format!("/run/user/{uid}")))
 }
 
+fn hyprland_lua_focus_window_dispatch(address: &str) -> String {
+    format!(r#"hl.dsp.focus({{ window = "{address}" }})"#)
+}
+
+fn hyprctl_dispatch_succeeded(output: &std::process::Output) -> bool {
+    output.status.success()
+        && !hyprctl_stream_has_error(&output.stdout)
+        && !hyprctl_stream_has_error(&output.stderr)
+}
+
+fn hyprctl_stream_has_error(bytes: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(bytes);
+    text.lines().map(str::trim_start).any(|line| {
+        let line = line.to_ascii_lowercase();
+        line.starts_with("error:") || line.starts_with("warning:")
+    })
+}
+
+fn hyprctl_output_detail(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return stderr;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stdout.is_empty() {
+        return stdout;
+    }
+    output.status.to_string()
+}
+
 #[derive(Debug)]
 struct HyprlandInstanceCandidate {
     signature: String,
@@ -190,6 +259,8 @@ struct HyprlandInstanceCandidate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::{ExitStatus, Output};
     use std::time::Duration;
 
     #[test]
@@ -227,6 +298,79 @@ mod tests {
 
         assert_eq!(selected.signature, "newer");
     }
+
+    #[test]
+    fn parses_active_hyprland_window_with_native_address() {
+        let active_json = r#"{
+          "address": "0X559952B6DB60",
+          "mapped": true,
+          "hidden": false,
+          "at": [6, 51],
+          "size": [2548, 1383],
+          "workspace": {"id": 4, "name": "4"},
+          "class": "trae",
+          "title": "Trae",
+          "pid": 2770830,
+          "xwayland": false,
+          "focusHistoryID": 7
+        }"#;
+
+        let window = parse_hyprland_active_window(active_json).unwrap().unwrap();
+
+        assert_eq!(window.window_id, 0x559952b6db60);
+        assert_eq!(window.backend_window_id.as_deref(), Some("0x559952b6db60"));
+        assert!(window.focused);
+        assert_eq!(window.bounds.as_ref().unwrap().x, Some(6));
+        assert_eq!(window.bounds.as_ref().unwrap().height, 1383);
+    }
+
+    #[test]
+    fn empty_active_hyprland_window_returns_none() {
+        assert!(parse_hyprland_active_window("{}").unwrap().is_none());
+    }
+
+    #[test]
+    fn renders_lua_focus_window_dispatch() {
+        assert_eq!(
+            hyprland_lua_focus_window_dispatch("address:0x559952b6db60"),
+            r#"hl.dsp.focus({ window = "address:0x559952b6db60" })"#
+        );
+    }
+
+    #[test]
+    fn treats_hyprctl_error_output_as_failed_dispatch() {
+        let output = output_with_status(
+            0,
+            "error: [string \"return hl.dispatch(focuswindow address:0x1)\"]:1: ')' expected\n",
+            "",
+        );
+
+        assert!(!hyprctl_dispatch_succeeded(&output));
+        assert!(hyprctl_output_detail(&output).starts_with("error:"));
+    }
+
+    #[test]
+    fn treats_hyprctl_warning_output_as_failed_dispatch() {
+        let output = output_with_status(0, "warning: =[C]:-1: hl.focus: window not found\n", "");
+
+        assert!(!hyprctl_dispatch_succeeded(&output));
+        assert!(hyprctl_output_detail(&output).starts_with("warning:"));
+    }
+
+    #[test]
+    fn accepts_successful_hyprctl_dispatch_output() {
+        let output = output_with_status(0, "ok\n", "");
+
+        assert!(hyprctl_dispatch_succeeded(&output));
+    }
+
+    fn output_with_status(code: i32, stdout: &str, stderr: &str) -> Output {
+        Output {
+            status: ExitStatus::from_raw(code),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: stderr.as_bytes().to_vec(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -255,7 +399,8 @@ impl TryFrom<HyprlandClient> for WindowInfo {
     type Error = anyhow::Error;
 
     fn try_from(client: HyprlandClient) -> Result<Self> {
-        let window_id = parse_hyprland_address(&client.address)?;
+        let backend_window_id = normalize_hyprland_address(&client.address)?;
+        let window_id = parse_hyprland_address(&backend_window_id)?;
         let bounds = client.size.map(|[width, height]| WindowBounds {
             x: client.at.map(|[x, _]| x),
             y: client.at.map(|[_, y]| y),
@@ -272,6 +417,7 @@ impl TryFrom<HyprlandClient> for WindowInfo {
 
         Ok(WindowInfo {
             window_id,
+            backend_window_id: Some(backend_window_id),
             title: client.title,
             app_id: client.class_name.clone(),
             wm_class: client.class_name,
@@ -287,11 +433,20 @@ impl TryFrom<HyprlandClient> for WindowInfo {
     }
 }
 
-fn parse_hyprland_address(address: &str) -> Result<u64> {
-    let hex = address
-        .trim()
+fn normalize_hyprland_address(address: &str) -> Result<String> {
+    let trimmed = address.trim();
+    let hex = trimmed
         .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
         .context("Hyprland window address did not start with 0x")?;
+    let parsed = u64::from_str_radix(hex, 16)
+        .with_context(|| format!("failed to parse Hyprland window address {address}"))?;
+    Ok(format!("0x{parsed:x}"))
+}
+
+fn parse_hyprland_address(address: &str) -> Result<u64> {
+    let normalized = normalize_hyprland_address(address)?;
+    let hex = normalized.trim_start_matches("0x");
     u64::from_str_radix(hex, 16)
         .with_context(|| format!("failed to parse Hyprland window address {address}"))
 }

@@ -643,6 +643,7 @@ impl TryFrom<KwinRawWindow> for WindowInfo {
 
         Ok(WindowInfo {
             window_id: kwin_window_id_from_uuid(&uuid),
+            backend_window_id: Some(uuid),
             title: clean_string(window.caption.as_deref()),
             app_id,
             wm_class,

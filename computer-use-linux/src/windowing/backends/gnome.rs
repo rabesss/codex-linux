@@ -176,6 +176,7 @@ pub(crate) fn window_from_properties(
 
     WindowInfo {
         window_id,
+        backend_window_id: None,
         title: get_string(properties, "title"),
         app_id: get_string(properties, "app-id"),
         wm_class: get_string(properties, "wm-class"),

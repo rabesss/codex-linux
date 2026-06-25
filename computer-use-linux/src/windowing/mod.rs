@@ -68,6 +68,7 @@ mod tests {
     fn window(window_id: u64, title: &str, app_id: &str, wm_class: &str) -> WindowInfo {
         WindowInfo {
             window_id,
+            backend_window_id: None,
             title: Some(title.to_string()),
             app_id: Some(app_id.to_string()),
             wm_class: Some(wm_class.to_string()),
@@ -525,6 +526,10 @@ mod tests {
 
         assert_eq!(windows.len(), 3);
         assert_eq!(windows[0].window_id, 0x559952b6db60);
+        assert_eq!(
+            windows[0].backend_window_id.as_deref(),
+            Some("0x559952b6db60")
+        );
         assert_eq!(windows[0].app_id.as_deref(), Some("brave-browser"));
         assert_eq!(windows[0].wm_class.as_deref(), Some("brave-browser"));
         assert_eq!(windows[0].title.as_deref(), Some("Repo - Brave"));

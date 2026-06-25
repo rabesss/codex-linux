@@ -183,7 +183,10 @@ pub async fn activate_window(window: &WindowInfo) -> Result<()> {
 }
 
 pub fn focused_window_override() -> Option<WindowInfo> {
-    cosmic::focused_window().ok().flatten()
+    cosmic::focused_window()
+        .ok()
+        .flatten()
+        .or_else(|| hyprland::focused_window().ok().flatten())
 }
 
 pub fn probe_backends() -> Vec<BackendProbe> {
@@ -224,6 +227,7 @@ mod tests {
     fn window(backend: &str) -> WindowInfo {
         WindowInfo {
             window_id: 1,
+            backend_window_id: None,
             title: Some("Codex".to_string()),
             app_id: Some("codex-desktop".to_string()),
             wm_class: Some("codex-desktop".to_string()),
