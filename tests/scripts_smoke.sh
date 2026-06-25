@@ -2021,6 +2021,8 @@ SCRIPT
     assert_file_exists "$launcher_path"
     assert_contains "$workspace/output.log" "Managed Codex CLI ready: $launcher_path"
     assert_contains "$workspace/output.log" "codex-cli 9.9.9"
+    [ "$(head -n 1 "$launcher_path")" = "#!$BASH" ] || fail "Managed Codex CLI launcher must use concrete bash shebang"
+    assert_not_contains "$launcher_path" "#!/usr/bin/env bash"
     assert_contains "$launcher_path" '../node-runtime/bin/node'
     assert_contains "$launcher_path" '../codex-cli/node_modules/@openai/codex/bin/codex.js'
 }

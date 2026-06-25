@@ -27,11 +27,19 @@ write_managed_codex_cli_launcher() {
     local package_root="$1"
     local launcher_path="$2"
     local launcher_dir
+    local bash_path
 
     launcher_dir="$(dirname "$launcher_path")"
+    bash_path="${BASH:-}"
+    if [ -z "$bash_path" ] || [ ! -x "$bash_path" ]; then
+        bash_path="$(command -v bash 2>/dev/null || true)"
+    fi
+    [ -n "$bash_path" ] || error "Could not find bash for bundled Codex CLI launcher"
+
     mkdir -p "$launcher_dir"
-    cat > "$launcher_path" <<'SCRIPT'
-#!/usr/bin/env bash
+    {
+        printf '#!%s\n' "$bash_path"
+        cat <<'SCRIPT'
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -49,6 +57,7 @@ fi
 
 exec "$NODE_BIN" "$CODEX_JS" "$@"
 SCRIPT
+    } > "$launcher_path"
     chmod 0755 "$launcher_path"
 }
 
