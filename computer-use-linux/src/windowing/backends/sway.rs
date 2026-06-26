@@ -1,4 +1,5 @@
 use crate::terminal::enrich_terminal_windows;
+use crate::windowing::command_runner::{CommandRunner, RealCommandRunner};
 use crate::windowing::registry::BackendProbe;
 use crate::windowing::types::{WindowBounds, WindowInfo};
 use anyhow::{bail, Context, Result};
@@ -8,7 +9,17 @@ use std::{env, fs, os::unix::fs::FileTypeExt, path::PathBuf, process::Command};
 pub const SWAY_BACKEND: &str = "sway";
 
 pub fn probe() -> BackendProbe {
-    match swaymsg_command().args(["-t", "get_tree"]).output() {
+    let runner = RealCommandRunner;
+    probe_with_runner_and_socket(&runner, sway_socket_path())
+}
+
+fn probe_with_runner_and_socket(
+    runner: &impl CommandRunner,
+    socket_path: Option<PathBuf>,
+) -> BackendProbe {
+    let mut command = swaymsg_command_with_socket(socket_path);
+    command.args(["-t", "get_tree"]);
+    match runner.output(&mut command) {
         Ok(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let ok = matches!(
@@ -52,9 +63,18 @@ pub fn probe() -> BackendProbe {
 }
 
 pub fn list_windows() -> Result<Vec<WindowInfo>> {
-    let output = swaymsg_command()
-        .args(["-t", "get_tree"])
-        .output()
+    let runner = RealCommandRunner;
+    list_windows_with_runner_and_socket(&runner, sway_socket_path())
+}
+
+fn list_windows_with_runner_and_socket(
+    runner: &impl CommandRunner,
+    socket_path: Option<PathBuf>,
+) -> Result<Vec<WindowInfo>> {
+    let mut command = swaymsg_command_with_socket(socket_path);
+    command.args(["-t", "get_tree"]);
+    let output = runner
+        .output(&mut command)
         .context("failed to run swaymsg -t get_tree")?;
     if !output.status.success() {
         bail!(
@@ -78,10 +98,20 @@ pub(crate) fn parse_sway_tree(json: &str) -> Result<Vec<WindowInfo>> {
 }
 
 pub fn activate_window(window_id: u64) -> Result<()> {
+    let runner = RealCommandRunner;
+    activate_window_with_runner_and_socket(&runner, sway_socket_path(), window_id)
+}
+
+fn activate_window_with_runner_and_socket(
+    runner: &impl CommandRunner,
+    socket_path: Option<PathBuf>,
+    window_id: u64,
+) -> Result<()> {
     let selector = format!(r#"[con_id="{window_id}"] focus"#);
-    let output = swaymsg_command()
-        .arg(&selector)
-        .output()
+    let mut command = swaymsg_command_with_socket(socket_path);
+    command.arg(&selector);
+    let output = runner
+        .output(&mut command)
         .with_context(|| format!("failed to run swaymsg {selector}"))?;
     if !output.status.success() {
         bail!(
@@ -135,10 +165,6 @@ fn collect_sway_windows(
     for child in &node.floating_nodes {
         collect_sway_windows(child, current_workspace, current_in_dockarea, windows);
     }
-}
-
-fn swaymsg_command() -> Command {
-    swaymsg_command_with_socket(sway_socket_path())
 }
 
 fn swaymsg_command_with_socket(socket_path: Option<PathBuf>) -> Command {
@@ -375,7 +401,35 @@ impl SwayNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::windowing::command_runner::tests::{output_with_status, FakeCommandRunner};
     use std::ffi::OsStr;
+
+    #[test]
+    fn list_command_clears_inherited_socket_env_while_passing_vetted_socket() {
+        let runner = FakeCommandRunner::new(vec![output_with_status(0, r#"{"nodes":[]}"#, "")]);
+
+        let windows = list_windows_with_runner_and_socket(
+            &runner,
+            Some(PathBuf::from("/run/user/1000/sway-ipc.1000.123.sock")),
+        )
+        .unwrap();
+
+        assert!(windows.is_empty());
+        let invocations = runner.invocations();
+        assert_eq!(invocations.len(), 1);
+        assert!(invocations[0].program_is("swaymsg"));
+        assert_eq!(
+            invocations[0].args,
+            vec![
+                "--socket",
+                "/run/user/1000/sway-ipc.1000.123.sock",
+                "-t",
+                "get_tree"
+            ]
+        );
+        assert!(invocations[0].removes_env("I3SOCK"));
+        assert!(invocations[0].removes_env("SWAYSOCK"));
+    }
 
     #[test]
     fn command_clears_inherited_i3_and_sway_socket_env() {

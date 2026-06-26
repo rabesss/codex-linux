@@ -1,4 +1,5 @@
 use crate::terminal::enrich_terminal_windows;
+use crate::windowing::command_runner::{CommandRunner, RealCommandRunner};
 use crate::windowing::registry::BackendProbe;
 use crate::windowing::types::{WindowBounds, WindowInfo};
 use anyhow::{bail, Context, Result};
@@ -8,7 +9,17 @@ use std::{env, fs, os::unix::fs::FileTypeExt, path::PathBuf, process::Command};
 pub const I3_BACKEND: &str = "i3";
 
 pub fn probe() -> BackendProbe {
-    match i3_msg_command().args(["-t", "get_tree"]).output() {
+    let runner = RealCommandRunner;
+    probe_with_runner_and_socket(&runner, i3_socket_path())
+}
+
+fn probe_with_runner_and_socket(
+    runner: &impl CommandRunner,
+    socket_path: Option<PathBuf>,
+) -> BackendProbe {
+    let mut command = i3_msg_command_with_socket(socket_path);
+    command.args(["-t", "get_tree"]);
+    match runner.output(&mut command) {
         Ok(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let ok = matches!(
@@ -52,9 +63,18 @@ pub fn probe() -> BackendProbe {
 }
 
 pub fn list_windows() -> Result<Vec<WindowInfo>> {
-    let output = i3_msg_command()
-        .args(["-t", "get_tree"])
-        .output()
+    let runner = RealCommandRunner;
+    list_windows_with_runner_and_socket(&runner, i3_socket_path())
+}
+
+fn list_windows_with_runner_and_socket(
+    runner: &impl CommandRunner,
+    socket_path: Option<PathBuf>,
+) -> Result<Vec<WindowInfo>> {
+    let mut command = i3_msg_command_with_socket(socket_path);
+    command.args(["-t", "get_tree"]);
+    let output = runner
+        .output(&mut command)
         .context("failed to run i3-msg -t get_tree")?;
     if !output.status.success() {
         bail!(
@@ -64,7 +84,7 @@ pub fn list_windows() -> Result<Vec<WindowInfo>> {
     }
 
     let mut windows = parse_i3_tree(&String::from_utf8_lossy(&output.stdout))?;
-    hydrate_i3_window_pids(&mut windows);
+    hydrate_i3_window_pids_with_runner(&mut windows, runner);
     enrich_terminal_windows(&mut windows);
     Ok(windows)
 }
@@ -79,10 +99,20 @@ pub(crate) fn parse_i3_tree(json: &str) -> Result<Vec<WindowInfo>> {
 }
 
 pub fn activate_window(window_id: u64) -> Result<()> {
+    let runner = RealCommandRunner;
+    activate_window_with_runner_and_socket(&runner, i3_socket_path(), window_id)
+}
+
+fn activate_window_with_runner_and_socket(
+    runner: &impl CommandRunner,
+    socket_path: Option<PathBuf>,
+    window_id: u64,
+) -> Result<()> {
     let selector = format!(r#"[id="0x{window_id:x}"] focus"#);
-    let output = i3_msg_command()
-        .arg(&selector)
-        .output()
+    let mut command = i3_msg_command_with_socket(socket_path);
+    command.arg(&selector);
+    let output = runner
+        .output(&mut command)
         .with_context(|| format!("failed to run i3-msg {selector}"))?;
     if !output.status.success() {
         bail!(
@@ -138,19 +168,18 @@ fn collect_i3_windows(
     }
 }
 
-fn hydrate_i3_window_pids(windows: &mut [WindowInfo]) {
+fn hydrate_i3_window_pids_with_runner(windows: &mut [WindowInfo], runner: &impl CommandRunner) {
     for window in windows {
         if window.pid.is_none() {
-            window.pid = i3_window_pid(window.window_id);
+            window.pid = i3_window_pid_with_runner(runner, window.window_id);
         }
     }
 }
 
-fn i3_window_pid(window_id: u64) -> Option<u32> {
-    let output = Command::new("xprop")
-        .args(["-id", &window_id.to_string(), "_NET_WM_PID"])
-        .output()
-        .ok()?;
+fn i3_window_pid_with_runner(runner: &impl CommandRunner, window_id: u64) -> Option<u32> {
+    let mut command = Command::new("xprop");
+    command.args(["-id", &window_id.to_string(), "_NET_WM_PID"]);
+    let output = runner.output(&mut command).ok()?;
     if !output.status.success() {
         return None;
     }
@@ -161,9 +190,9 @@ pub(crate) fn parse_xprop_pid(output: &str) -> Option<u32> {
     output.split('=').nth(1)?.trim().parse::<u32>().ok()
 }
 
-fn i3_msg_command() -> Command {
+fn i3_msg_command_with_socket(socket_path: Option<PathBuf>) -> Command {
     let mut command = Command::new("i3-msg");
-    if let Some(socket_path) = i3_socket_path() {
+    if let Some(socket_path) = socket_path {
         command.arg("-s").arg(socket_path);
     }
     command
@@ -304,5 +333,64 @@ impl I3Node {
             backend: I3_BACKEND.to_string(),
             terminal: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::windowing::command_runner::tests::{output_with_status, FakeCommandRunner};
+
+    #[test]
+    fn list_and_activate_commands_run_through_fake_runner() {
+        let socket = PathBuf::from("/run/user/1000/i3/ipc-socket.42");
+        let tree = r#"{
+          "nodes": [{
+            "type": "workspace",
+            "num": 2,
+            "nodes": [{
+              "type": "con",
+              "name": "Terminal",
+              "window": 4194307,
+              "window_properties": {
+                "class": "XTerm",
+                "instance": "xterm",
+                "title": "Terminal"
+              },
+              "rect": {"x": 10, "y": 20, "width": 800, "height": 600}
+            }]
+          }]
+        }"#;
+        let runner = FakeCommandRunner::new(vec![
+            output_with_status(0, tree, ""),
+            output_with_status(0, "_NET_WM_PID(CARDINAL) = 1234\n", ""),
+            output_with_status(0, r#"[{"success":true}]"#, ""),
+        ]);
+
+        let windows = list_windows_with_runner_and_socket(&runner, Some(socket.clone())).unwrap();
+        activate_window_with_runner_and_socket(&runner, Some(socket), 0x400003).unwrap();
+
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].window_id, 0x400003);
+        assert_eq!(windows[0].pid, Some(1234));
+
+        let invocations = runner.invocations();
+        assert_eq!(invocations.len(), 3);
+        assert!(invocations[0].program_is("i3-msg"));
+        assert_eq!(
+            invocations[0].args,
+            vec!["-s", "/run/user/1000/i3/ipc-socket.42", "-t", "get_tree"]
+        );
+        assert!(invocations[1].program_is("xprop"));
+        assert_eq!(invocations[1].args, vec!["-id", "4194307", "_NET_WM_PID"]);
+        assert!(invocations[2].program_is("i3-msg"));
+        assert_eq!(
+            invocations[2].args,
+            vec![
+                "-s",
+                "/run/user/1000/i3/ipc-socket.42",
+                r#"[id="0x400003"] focus"#
+            ]
+        );
     }
 }

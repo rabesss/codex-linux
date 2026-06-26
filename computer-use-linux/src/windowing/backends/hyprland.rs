@@ -1,4 +1,5 @@
 use crate::terminal::enrich_terminal_windows;
+use crate::windowing::command_runner::{CommandRunner, RealCommandRunner};
 use crate::windowing::registry::BackendProbe;
 use crate::windowing::types::{WindowBounds, WindowInfo};
 use anyhow::{bail, Context, Result};
@@ -12,7 +13,12 @@ use std::time::SystemTime;
 pub const HYPRLAND_BACKEND: &str = "hyprland";
 
 pub fn probe() -> BackendProbe {
-    match hyprctl_output(&["clients", "-j"]) {
+    let runner = RealCommandRunner;
+    probe_with_runner(&runner)
+}
+
+fn probe_with_runner(runner: &impl CommandRunner) -> BackendProbe {
+    match hyprctl_output_with_runner(runner, &["clients", "-j"]) {
         Ok(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let ok = matches!(
@@ -56,7 +62,13 @@ pub fn probe() -> BackendProbe {
 }
 
 pub fn list_windows() -> Result<Vec<WindowInfo>> {
-    let output = hyprctl_output(&["clients", "-j"]).context("failed to run hyprctl clients -j")?;
+    let runner = RealCommandRunner;
+    list_windows_with_runner(&runner)
+}
+
+fn list_windows_with_runner(runner: &impl CommandRunner) -> Result<Vec<WindowInfo>> {
+    let output = hyprctl_output_with_runner(runner, &["clients", "-j"])
+        .context("failed to run hyprctl clients -j")?;
     if !output.status.success() {
         bail!(
             "hyprctl clients -j failed: {}",
@@ -68,8 +80,13 @@ pub fn list_windows() -> Result<Vec<WindowInfo>> {
 }
 
 pub fn focused_window() -> Result<Option<WindowInfo>> {
-    let output =
-        hyprctl_output(&["activewindow", "-j"]).context("failed to run hyprctl activewindow -j")?;
+    let runner = RealCommandRunner;
+    focused_window_with_runner(&runner)
+}
+
+fn focused_window_with_runner(runner: &impl CommandRunner) -> Result<Option<WindowInfo>> {
+    let output = hyprctl_output_with_runner(runner, &["activewindow", "-j"])
+        .context("failed to run hyprctl activewindow -j")?;
     if !output.status.success() {
         bail!(
             "hyprctl activewindow -j failed: {}",
@@ -113,15 +130,20 @@ pub(crate) fn parse_hyprland_active_window(json: &str) -> Result<Option<WindowIn
 }
 
 pub fn activate_window(window_id: u64) -> Result<()> {
+    let runner = RealCommandRunner;
+    activate_window_with_runner(&runner, window_id)
+}
+
+fn activate_window_with_runner(runner: &impl CommandRunner, window_id: u64) -> Result<()> {
     let address = format!("address:0x{window_id:x}");
     let lua_dispatch = hyprland_lua_focus_window_dispatch(&address);
-    let modern = hyprctl_output(&["dispatch", &lua_dispatch])
+    let modern = hyprctl_output_with_runner(runner, &["dispatch", &lua_dispatch])
         .with_context(|| format!("failed to run hyprctl dispatch {lua_dispatch}"))?;
     if hyprctl_dispatch_succeeded(&modern) {
         return Ok(());
     }
 
-    let legacy = hyprctl_output(&["dispatch", "focuswindow", &address])
+    let legacy = hyprctl_output_with_runner(runner, &["dispatch", "focuswindow", &address])
         .with_context(|| format!("failed to run hyprctl dispatch focuswindow {address}"))?;
     if hyprctl_dispatch_succeeded(&legacy) {
         return Ok(());
@@ -134,17 +156,53 @@ pub fn activate_window(window_id: u64) -> Result<()> {
     );
 }
 
-fn hyprctl_output(args: &[&str]) -> std::io::Result<std::process::Output> {
+fn hyprctl_output_with_runner(
+    runner: &impl CommandRunner,
+    args: &[&str],
+) -> std::io::Result<std::process::Output> {
+    let has_env_signature = hyprland_env_signature_present();
+    let inferred_signature = if has_env_signature {
+        None
+    } else {
+        infer_hyprland_instance_signature()
+    };
+    hyprctl_output_with_runner_and_signature(
+        runner,
+        args,
+        inferred_signature.as_deref(),
+        has_env_signature,
+    )
+}
+
+fn hyprctl_output_with_runner_and_signature(
+    runner: &impl CommandRunner,
+    args: &[&str],
+    inferred_signature: Option<&str>,
+    has_env_signature: bool,
+) -> std::io::Result<std::process::Output> {
+    let mut command = hyprctl_command(args, inferred_signature, has_env_signature);
+    runner.output(&mut command)
+}
+
+fn hyprctl_command(
+    args: &[&str],
+    inferred_signature: Option<&str>,
+    has_env_signature: bool,
+) -> Command {
     let mut command = Command::new("hyprctl");
-    let has_signature = std::env::var("HYPRLAND_INSTANCE_SIGNATURE")
-        .ok()
-        .is_some_and(|value| !value.trim().is_empty());
-    if !has_signature {
-        if let Some(signature) = infer_hyprland_instance_signature() {
-            command.args(["-i", &signature]);
+    if !has_env_signature {
+        if let Some(signature) = inferred_signature {
+            command.args(["-i", signature]);
         }
     }
-    command.args(args).output()
+    command.args(args);
+    command
+}
+
+fn hyprland_env_signature_present() -> bool {
+    std::env::var("HYPRLAND_INSTANCE_SIGNATURE")
+        .ok()
+        .is_some_and(|value| !value.trim().is_empty())
 }
 
 fn infer_hyprland_instance_signature() -> Option<String> {
@@ -259,8 +317,7 @@ struct HyprlandInstanceCandidate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::process::ExitStatusExt;
-    use std::process::{ExitStatus, Output};
+    use crate::windowing::command_runner::tests::{output_with_status, FakeCommandRunner};
     use std::time::Duration;
 
     #[test]
@@ -297,6 +354,45 @@ mod tests {
         let selected = select_hyprland_instance(vec![older, newer]).unwrap();
 
         assert_eq!(selected.signature, "newer");
+    }
+
+    #[test]
+    fn hyprctl_uses_inferred_instance_signature_when_env_signature_is_absent() {
+        let runner = FakeCommandRunner::new(vec![output_with_status(0, "[]", "")]);
+
+        hyprctl_output_with_runner_and_signature(
+            &runner,
+            &["clients", "-j"],
+            Some("inferred-signature"),
+            false,
+        )
+        .unwrap();
+
+        let invocations = runner.invocations();
+        assert_eq!(invocations.len(), 1);
+        assert!(invocations[0].program_is("hyprctl"));
+        assert_eq!(
+            invocations[0].args,
+            vec!["-i", "inferred-signature", "clients", "-j"]
+        );
+    }
+
+    #[test]
+    fn hyprctl_keeps_env_instance_signature_authoritative() {
+        let runner = FakeCommandRunner::new(vec![output_with_status(0, "[]", "")]);
+
+        hyprctl_output_with_runner_and_signature(
+            &runner,
+            &["clients", "-j"],
+            Some("inferred-signature"),
+            true,
+        )
+        .unwrap();
+
+        let invocations = runner.invocations();
+        assert_eq!(invocations.len(), 1);
+        assert!(invocations[0].program_is("hyprctl"));
+        assert_eq!(invocations[0].args, vec!["clients", "-j"]);
     }
 
     #[test]
@@ -362,14 +458,6 @@ mod tests {
         let output = output_with_status(0, "ok\n", "");
 
         assert!(hyprctl_dispatch_succeeded(&output));
-    }
-
-    fn output_with_status(code: i32, stdout: &str, stderr: &str) -> Output {
-        Output {
-            status: ExitStatus::from_raw(code),
-            stdout: stdout.as_bytes().to_vec(),
-            stderr: stderr.as_bytes().to_vec(),
-        }
     }
 }
 
