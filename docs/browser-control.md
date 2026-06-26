@@ -22,13 +22,17 @@ patched here. Other Chromium-family browsers need explicit executable, profile,
 extension, native-host, and launch support before they are treated as supported.
 
 The browser-control target does not have to be the system default browser.
+Setup, verification, and plugin patches may read the system default browser for
+diagnostics or as a supported-browser tie breaker, but they must not change the
+desktop's HTTP/HTML default-browser setting.
 
 ## Selection Rules
 
 The patched plugin prefers:
 
 1. A supported profile where the Codex extension is installed.
-2. The supported browser matching `xdg-settings get default-web-browser`.
+2. The supported browser matching the read-only
+   `xdg-settings get default-web-browser` value.
 3. The first existing supported profile root.
 4. Google Chrome paths as the fallback shape.
 
@@ -102,6 +106,12 @@ scripts/workstation/verify-browser-cdp-screenshot.js \
 The native host exposes a local `linuxDiagnostics` JSON-RPC request with
 connection counts, pending requests, and rollout-watcher state. Absolute
 rollout paths are redacted unless local debugging explicitly requests them.
+
+When the screenshot probe cannot resolve a target, its error includes the
+requested target order, candidate executable names, and the read-only
+default-browser value it observed. Use those diagnostics to fix the selected
+target or explicit executable override; do not change the system default
+browser unless the user explicitly asks for that system-level change.
 
 ## Custom Models
 

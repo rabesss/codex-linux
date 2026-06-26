@@ -15,9 +15,11 @@ const {
   decodeWebSocketFrames,
   encodeWebSocketFrame,
   encodeWebSocketTextFrame,
+  formatBrowserSelectionDiagnostics,
   hasPngHeader,
   normalizeBrowserExecutable,
   parseArgs,
+  readDefaultWebBrowser,
   selectBrowserCommand,
 } = require("./verify-browser-cdp-screenshot.js");
 
@@ -25,6 +27,19 @@ const PNG_1X1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lP0I7wAAAABJRU5ErkJggg==",
   "base64",
 );
+
+function defaultBrowserRunner(value, calls = []) {
+  return {
+    resolveExecutable(command, env) {
+      calls.push({ type: "resolve", command, path: env.PATH });
+      return "/usr/bin/xdg-settings";
+    },
+    spawnSync(command, args, options) {
+      calls.push({ type: "spawn", command, args, env: options.env });
+      return { status: 0, stdout: `${value}\n`, stderr: "" };
+    },
+  };
+}
 
 test("argument parser accepts target, CDP, screenshot, and JSON options", () => {
   const options = parseArgs([
@@ -58,6 +73,76 @@ test("browser selection honors explicit executable without consulting target ord
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
+});
+
+test("browser selection defaults to Brave Origin Nightly before other supported browsers", () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-browser-select-order-"));
+  try {
+    const braveOrigin = path.join(temp, "brave-origin-nightly");
+    const chrome = path.join(temp, "google-chrome");
+    fs.writeFileSync(braveOrigin, "#!/bin/sh\nexit 0\n");
+    fs.writeFileSync(chrome, "#!/bin/sh\nexit 0\n");
+    fs.chmodSync(braveOrigin, 0o755);
+    fs.chmodSync(chrome, 0o755);
+
+    const selected = selectBrowserCommand({}, { PATH: temp });
+    if (fs.existsSync("/opt/brave.com/brave-origin-nightly/brave")) {
+      assert.equal(selected.command, "/opt/brave.com/brave-origin-nightly/brave");
+    } else {
+      assert.equal(selected.command, braveOrigin);
+    }
+    assert.equal(selected.target, "brave-origin-nightly");
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("browser selection failure reports candidates and reads the default browser without changing it", () => {
+  const calls = [];
+  const env = { PATH: "" };
+  assert.throws(
+    () => selectBrowserCommand(
+      { target: "brave-origin-nightly" },
+      env,
+      defaultBrowserRunner("zen.desktop", calls),
+    ),
+    (error) => {
+      assert.match(error.message, /No supported browser executable found/);
+      assert.match(error.message, /target order: brave-origin-nightly/);
+      assert.match(error.message, /brave-origin-nightly=\[brave-origin-nightly\]/);
+      assert.match(error.message, /system default browser: zen\.desktop/);
+      assert.match(error.message, /system default unchanged/);
+      return true;
+    },
+  );
+  assert.deepEqual(calls, [
+    { type: "resolve", command: "xdg-settings", path: "" },
+    { type: "spawn", command: "/usr/bin/xdg-settings", args: ["get", "default-web-browser"], env },
+  ]);
+});
+
+test("browser selection diagnostics include explicit override failures", () => {
+  const diagnostic = formatBrowserSelectionDiagnostics({
+    explicit: "/missing/browser",
+    targetOrder: [],
+    env: { PATH: "" },
+  });
+  assert.match(diagnostic, /explicit executable: \/missing\/browser/);
+  assert.match(diagnostic, /system default browser: unavailable \(xdg-settings not found\)/);
+  assert.match(diagnostic, /system default unchanged/);
+});
+
+test("default browser diagnostic shells out to xdg-settings get only", () => {
+  const calls = [];
+  const env = { PATH: "/bin" };
+  assert.deepEqual(readDefaultWebBrowser(env, defaultBrowserRunner("brave-origin-nightly.desktop", calls)), {
+    value: "brave-origin-nightly.desktop",
+    detail: null,
+  });
+  assert.deepEqual(calls, [
+    { type: "resolve", command: "xdg-settings", path: "/bin" },
+    { type: "spawn", command: "/usr/bin/xdg-settings", args: ["get", "default-web-browser"], env },
+  ]);
 });
 
 test("Brave Origin wrapper is normalized to the direct packaged binary when present", () => {

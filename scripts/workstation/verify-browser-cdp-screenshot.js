@@ -164,7 +164,12 @@ function isExecutable(filePath) {
   }
 }
 
-function selectBrowserCommand(options = {}, env = process.env) {
+const defaultBrowserCommandRunner = {
+  resolveExecutable: (command, env) => resolveExecutable(command, env),
+  spawnSync: (...args) => childProcess.spawnSync(...args),
+};
+
+function selectBrowserCommand(options = {}, env = process.env, diagnosticsRunner = defaultBrowserCommandRunner) {
   const explicit =
     options.browser ||
     trimmed(env.CODEX_BROWSER_CONTROL_EXECUTABLE) ||
@@ -172,7 +177,15 @@ function selectBrowserCommand(options = {}, env = process.env) {
   if (explicit) {
     const resolved = resolveExecutable(explicit, env);
     if (!resolved) {
-      throw new Error(`Browser executable is not available: ${explicit}`);
+      throw new Error(
+        `Browser executable is not available: ${explicit}. ` +
+          formatBrowserSelectionDiagnostics({
+            explicit,
+            targetOrder: [],
+            env,
+            runner: diagnosticsRunner,
+          }),
+      );
     }
     const target = options.target || "custom";
     return { command: normalizeBrowserExecutable(resolved, target), target };
@@ -183,7 +196,14 @@ function selectBrowserCommand(options = {}, env = process.env) {
   for (const target of targetOrder) {
     const commands = TARGETS[target];
     if (!commands) {
-      throw new Error(`Unsupported browser target: ${target}`);
+      throw new Error(
+        `Unsupported browser target: ${target}. Supported targets: ${Object.keys(TARGETS).join(", ")}. ` +
+          formatBrowserSelectionDiagnostics({
+            targetOrder,
+            env,
+            runner: diagnosticsRunner,
+          }),
+      );
     }
     for (const command of commands) {
       const resolved = resolveExecutable(command, env);
@@ -192,8 +212,68 @@ function selectBrowserCommand(options = {}, env = process.env) {
   }
 
   throw new Error(
-    `No supported browser executable found. Tried targets: ${targetOrder.join(", ")}`,
+    `No supported browser executable found. ` +
+      formatBrowserSelectionDiagnostics({
+        targetOrder,
+        env,
+        runner: diagnosticsRunner,
+      }),
   );
+}
+
+function formatBrowserSelectionDiagnostics({
+  explicit = null,
+  targetOrder = DEFAULT_TARGET_ORDER,
+  env = process.env,
+  runner = defaultBrowserCommandRunner,
+} = {}) {
+  const details = [];
+  if (explicit) {
+    details.push(`explicit executable: ${explicit}`);
+  }
+  if (targetOrder.length > 0) {
+    details.push(`target order: ${targetOrder.join(", ")}`);
+    details.push(`candidate commands: ${formatCandidateCommands(targetOrder)}`);
+  }
+  details.push(`system default browser: ${formatDefaultWebBrowser(readDefaultWebBrowser(env, runner))}`);
+  details.push("system default unchanged: this probe only reads xdg-settings get default-web-browser");
+  return details.join("; ");
+}
+
+function formatCandidateCommands(targetOrder) {
+  return targetOrder
+    .map((target) => {
+      const commands = TARGETS[target];
+      return commands ? `${target}=[${commands.join(", ")}]` : `${target}=[unsupported]`;
+    })
+    .join("; ");
+}
+
+function readDefaultWebBrowser(env = process.env, runner = defaultBrowserCommandRunner) {
+  const xdgSettings = runner.resolveExecutable("xdg-settings", env);
+  if (!xdgSettings) {
+    return { value: null, detail: "xdg-settings not found" };
+  }
+
+  const result = runner.spawnSync(xdgSettings, ["get", "default-web-browser"], {
+    encoding: "utf8",
+    env,
+    timeout: 1500,
+  });
+  if (result.error) {
+    return { value: null, detail: result.error.message };
+  }
+  if (result.status !== 0) {
+    const detail = trimmed(result.stderr) || `exit ${result.status}`;
+    return { value: null, detail };
+  }
+
+  return { value: trimmed(result.stdout), detail: null };
+}
+
+function formatDefaultWebBrowser(defaultBrowser) {
+  if (defaultBrowser.value) return defaultBrowser.value;
+  return defaultBrowser.detail ? `unavailable (${defaultBrowser.detail})` : "unreported";
 }
 
 function normalizeBrowserExecutable(command, target) {
@@ -720,6 +800,10 @@ async function main(argv) {
     console.log(`CDP: ${report.cdpUrl}`);
   } else {
     console.error(`FAIL: ${report.message}`);
+    if (report.target) console.error(`Target: ${report.target}`);
+    if (report.browser) console.error(`Browser: ${report.browser}`);
+    if (report.profileDir) console.error(`Profile: ${report.profileDir}`);
+    if (report.cdpUrl) console.error(`CDP: ${report.cdpUrl}`);
     if (report.browserStderr) {
       console.error(report.browserStderr.trim());
     }
@@ -743,7 +827,9 @@ module.exports = {
   encodeWebSocketFrame,
   encodeWebSocketTextFrame,
   hasPngHeader,
+  formatBrowserSelectionDiagnostics,
   parseArgs,
+  readDefaultWebBrowser,
   runVerification,
   selectBrowserCommand,
   normalizeBrowserExecutable,

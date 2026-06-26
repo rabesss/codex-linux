@@ -33,6 +33,19 @@ check_absent \
   --glob '!dist*/**' \
   --glob '!*.lock'
 
+check_absent \
+  "browser-control code does not change the system default browser" \
+  'xdg-settings[[:space:]]+set[[:space:]]+default-web-browser|xdg-mime[[:space:]]+default.*(x-scheme-handler/(http|https)|text/html)' \
+  docs \
+  linux-features \
+  packaging \
+  scripts \
+  --glob '!scripts/workstation/verify-policy.sh' \
+  --glob '!node_modules/**' \
+  --glob '!target/**' \
+  --glob '!codex-app/**' \
+  --glob '!dist*/**'
+
 if [ -e linux-features/features.json ]; then
   echo "FAIL: linux-features/features.json must stay uncommitted; use profiles/workstation/features.json" >&2
   fail=1
