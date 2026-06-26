@@ -164,6 +164,12 @@ hashes only. The native package build may consume the approved DMG locally, but
 public releases and CI artifacts must not upload the DMG, extracted app, or
 rebuilt package payload containing OpenAI application code.
 
+Ordinary push and pull-request CI validates committed metadata and package
+fixtures. It does not download the moving upstream `Codex.dmg`, so unrelated
+wrapper changes are not blocked when OpenAI publishes a new DMG. Live DMG
+validation is isolated to scheduled/manual automation that records either a
+candidate or a patch-drift issue.
+
 When validating a new upstream DMG:
 
 ```bash
@@ -173,6 +179,21 @@ make inspect-upstream DMG=/path/to/Codex.dmg
 Inspection writes rebuild and patch reports without replacing `codex-app/`.
 Promotion of a candidate app pin is a Git review step, not an automatic result
 of "latest DMG exists."
+
+Nix package-output refreshes are downstream of that live-DMG lane. The normal CI
+flake check proves committed metadata and evaluation are coherent; the dedicated
+Nix refresh workflow performs full package-output builds only after upstream
+watcher success or explicit maintainer dispatch.
+
+The local container runner follows the same boundary:
+
+```bash
+./scripts/ci-local.sh nix
+CI_NIX_BUILD_OUTPUTS=1 ./scripts/ci-local.sh nix
+```
+
+Use the first command for ordinary CI parity and the second only when you
+intentionally want to build the fixed-output package payloads.
 
 ## Custom-Model Package Profile
 

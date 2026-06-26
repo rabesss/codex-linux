@@ -30,13 +30,14 @@ Targets:
   install-deps:ubuntu-22.04  Test install-deps on one apt image
   install-deps:ubuntu-24.04  Test install-deps on one apt image
   install-deps:debian-12     Test install-deps on one apt image
-  nix                        Run the heavy Nix flake build checks
+  nix                        Run Nix metadata validation and flake evaluation
   upstream                   Build the app against the upstream DMG
 
 Environment:
   CI_CONTAINER_ENGINE=docker|podman
   CI_PACKAGE_VERSION=2026.04.28.000000+local
   CI_DMG_PATH=/path/to/Codex.dmg
+  CI_NIX_BUILD_OUTPUTS=1
   CI_SKIP_PULL=1
   CI_CACHE_DIR=/path/to/cache
 
@@ -145,6 +146,7 @@ run_container_job() {
         -e "CARGO_TERM_COLOR=${CARGO_TERM_COLOR:-always}"
         -e "UPSTREAM_DMG_URL=${UPSTREAM_DMG_URL:-https://persistent.oaistatic.com/codex-app-prod/Codex.dmg}"
         -e "UPSTREAM_DMG_PATH=${UPSTREAM_DMG_PATH:-/tmp/codex-upstream-ci/Codex.dmg}"
+        -e "CI_NIX_BUILD_OUTPUTS=${CI_NIX_BUILD_OUTPUTS:-0}"
         -v "$REPO_DIR:/work"
         -v "$CI_CACHE_DIR:/ci-cache"
         -w /work

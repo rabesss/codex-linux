@@ -1,7 +1,11 @@
 name: Update Nix upstream hashes
 
-# Manual-only until Nix pin refresh can run reliably against current patch CI.
 on:
+  workflow_run:
+    workflows:
+      - Upstream DMG Watcher
+    types:
+      - completed
   workflow_dispatch: {}
 
 permissions:
@@ -15,6 +19,7 @@ concurrency:
 
 jobs:
   update-hash:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -87,12 +92,14 @@ jobs:
           cat >"$pr_body" <<EOF
           ## Summary
           - refresh Codex.dmg hash and upstream version pins to the current upstream DMG
+          - run only after the scheduled/manual upstream DMG watcher has succeeded, or by explicit manual dispatch
           - update Electron fixed-output hashes when electronVersion changes
           - regenerate nix/native-modules/package-lock.json when native module pins change
           - regenerate SUPPORTED.md from the refreshed Nix pins and approved upstream lock
           $APPCAST_NOTE
 
           ## Validation
+          - upstream DMG watcher passed before this automatic refresh, or a maintainer started this workflow manually
           - this workflow verified all Codex Desktop Nix package outputs before opening the PR
           - refreshed Codex.dmg SRI hash: \`$CODEX_DMG_HASH\`
           EOF

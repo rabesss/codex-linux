@@ -493,7 +493,7 @@ const metadata = {
 fs.writeFileSync("upstream-dmg-metadata.json", JSON.stringify(metadata, null, 2) + "\n");
 NODE
 
-    append_summary "Upstream Build App" \
+    append_summary "Upstream DMG Watcher" \
         "DMG URL: \`$UPSTREAM_DMG_URL\`" \
         "DMG Last-Modified: \`$last_modified\`" \
         "DMG ETag: \`$etag\`" \
@@ -523,17 +523,34 @@ run_upstream_job() {
     make build-app DMG="$dmg_path"
 }
 
+run_nix_node() {
+    if command -v node >/dev/null 2>&1; then
+        node "$@"
+    else
+        nix develop --command node "$@"
+    fi
+}
+
 run_nix_job_as_root() {
     enter_workspace
     export NIX_CONFIG="${NIX_CONFIG:-experimental-features = nix-command flakes}"
 
-    nix flake check --no-write-lock-file --option sandbox false
-    nix build .#codex-desktop --no-link --print-build-logs --option sandbox false
-    nix build .#installer --no-link --print-build-logs --option sandbox false
+    run_nix_node scripts/ci/validate-nix-pin-metadata.js
+    nix flake check --no-build --no-write-lock-file --option sandbox false
 
-    append_summary "Nix Validation" \
-        "Flake check passed." \
-        "Built .#codex-desktop and .#installer without result links."
+    if [ "${CI_NIX_BUILD_OUTPUTS:-0}" = "1" ]; then
+        nix build .#codex-desktop --no-link --print-build-logs --option sandbox false
+        nix build .#installer --no-link --print-build-logs --option sandbox false
+        append_summary "Nix Metadata" \
+            "Committed Nix pin metadata validation passed." \
+            "Flake evaluation passed without writing the lock file." \
+            "Opt-in package-output build passed for .#codex-desktop and .#installer."
+    else
+        append_summary "Nix Metadata" \
+            "Committed Nix pin metadata validation passed." \
+            "Flake evaluation passed without building live fixed-output package payloads." \
+            "Set CI_NIX_BUILD_OUTPUTS=1 for an explicit local package-output build."
+    fi
 }
 
 run_job_as_current_user() {

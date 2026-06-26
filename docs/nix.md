@@ -6,10 +6,29 @@ Run Codex Desktop for Linux directly with:
 nix run github:rabesss/codex-linux
 ```
 
-The flake handles dependencies and patches Electron for NixOS. A GitHub Actions
-bot refreshes the upstream `Codex.dmg` hash and verifies the Nix package outputs
-in `main`. If you hit a hash mismatch right after an upstream release, wait for
-the next bot run and retry.
+The flake handles dependencies and patches Electron for NixOS. Ordinary
+push/pull-request CI validates committed Nix metadata and flake evaluation
+without downloading the mutable live `Codex.dmg`. Full Nix package-output
+refreshes run in a dedicated workflow after the upstream DMG watcher succeeds or
+when a maintainer starts it manually.
+
+For local CI parity, run:
+
+```bash
+./scripts/ci-local.sh nix
+```
+
+That target performs the same static metadata validation and flake evaluation
+as normal GitHub CI. To explicitly build the package outputs locally, opt in:
+
+```bash
+CI_NIX_BUILD_OUTPUTS=1 ./scripts/ci-local.sh nix
+```
+
+If you hit a hash mismatch right after an upstream release, the live DMG has
+probably moved before the Nix refresh workflow updated the committed hash. Check
+the upstream watcher and Nix refresh workflow status, then retry after the
+refresh PR lands.
 
 ## Codex CLI Requirement
 
@@ -163,8 +182,10 @@ nix develop github:rabesss/codex-linux
 ## Cachix
 
 CI can populate a Cachix cache named `codex-desktop-linux` for flake package
-outputs. To push to the cache, create it in Cachix and add a repository secret
-named `CACHIX_AUTH_TOKEN` with write access.
+outputs. Cache population is manual because it builds fixed-output app payloads
+from committed Nix pins and should not fail ordinary branch pushes when the
+upstream DMG moves. To push to the cache, create it in Cachix and add a
+repository secret named `CACHIX_AUTH_TOKEN` with write access.
 
 Users can opt in locally with:
 
@@ -172,5 +193,5 @@ Users can opt in locally with:
 cachix use codex-desktop-linux
 ```
 
-The scheduled `Populate Cachix` workflow builds the default package,
-feature-specific package variants, and `.#installer`.
+The `Populate Cachix` workflow builds the default package, feature-specific
+package variants, and `.#installer` when started manually.

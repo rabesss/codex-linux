@@ -34,9 +34,10 @@ package for the current distribution, and installs it with explicit system
 authorization.
 
 Supported package-builder paths include Debian/Ubuntu `.deb`,
-Fedora/openSUSE `.rpm`, Arch-family pacman packages, Nix package outputs, and
-local AppImage self-builds. CI validates those builders, but CI fixture
-packages are not release packages for users.
+Fedora/openSUSE `.rpm`, Arch-family pacman packages, Nix flake metadata and
+manual package-output refreshes, and local AppImage self-builds. CI validates
+the non-redistributing builder surfaces, but CI fixture packages are not release
+packages for users.
 
 ## Use The App
 
@@ -98,19 +99,26 @@ rebuild a Linux package from an approved upstream app pin.
 
 The governed flow is:
 
-1. CI or a maintainer detects upstream DMG metadata.
+1. The scheduled/manual upstream DMG watcher detects upstream DMG metadata.
 2. The candidate DMG is downloaded only inside the validation environment.
 3. The Linux patch set is applied and a patch report is produced.
-4. CI stores metadata and reports, not the DMG, extracted app, or rebuilt app
-   payload.
-5. A maintainer performs local dogfood and review.
-6. A promoted approval record pins the upstream app version, URL, SHA256, size,
+4. If validation passes, automation records metadata-only candidate evidence.
+5. If validation fails, automation records a patch-drift issue with the failed
+   required descriptors and patch report.
+6. A maintainer performs local dogfood and review.
+7. A promoted approval record pins the upstream app version, URL, SHA256, size,
    validation evidence, and minimum wrapper revision.
-7. End-user update checks consume the approved record by default.
+8. End-user update checks consume the approved record by default.
 
 If OpenAI publishes a newer DMG before it is approved, the updater may report
 that a candidate exists, but it should not replace the installed app from that
 unapproved candidate in the default path.
+
+Normal push and pull-request CI does not download the mutable live
+`Codex.dmg`. It validates committed metadata, updater policy, package fixtures,
+patch code, docs, and flake evaluation. Live upstream drift is isolated to the
+upstream watcher and the Nix refresh workflow that runs after watcher success
+or explicit maintainer dispatch.
 
 ## Approved Upstream App Pins
 

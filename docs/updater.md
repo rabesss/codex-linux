@@ -45,6 +45,13 @@ promotion process. Candidates can be useful for maintainer visibility, CI patch
 reports, and local dogfood, but they are not the default end-user install
 source.
 
+Normal push and pull-request CI does not use the mutable live upstream DMG as a
+gate. It validates committed updater policy, metadata, package fixtures, and
+flake evaluation. The scheduled/manual upstream DMG watcher owns live drift: it
+downloads the current official DMG, builds it, validates required patches, and
+then creates either metadata-only candidate evidence or a patch-drift issue.
+Promotion remains a reviewed Git change.
+
 The updater must block or fail closed when:
 
 - the downloaded DMG does not match the approved SHA256;
@@ -192,6 +199,13 @@ Maintainers should promote an upstream app candidate only after:
 8. Confirming official Codex/OpenAI routing remains direct.
 9. Recording the minimum wrapper revision required by the approved pin.
 10. Updating the approved app pin in Git with reviewable metadata only.
+
+The upstream watcher can produce two records:
+
+- candidate evidence when the live DMG differs from the approved pin and all
+  required patches validate;
+- patch-drift evidence when a required patch is missing, obsolete, or needs a
+  semantic retarget before the DMG can be promoted.
 
 The metadata-only CI artifact contains `upstream-dmg-candidate.json`. After
 local dogfood passes, promote it with:

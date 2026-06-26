@@ -1,11 +1,6 @@
 name: Populate Cachix
 
 on:
-  push:
-    branches:
-      - main
-  schedule:
-    - cron: '37 7 * * *'
   workflow_dispatch: {}
 
 permissions:
@@ -23,7 +18,7 @@ env:
 
 jobs:
   populate:
-    name: Build Nix flake outputs
+    name: Manual Nix cache build
     runs-on: ubuntu-latest
     timeout-minutes: 150
     steps:
@@ -31,7 +26,7 @@ jobs:
 
       - uses: cachix/install-nix-action@v31
 
-      - name: Configure Cachix for push
+      - name: Configure Cachix for manual push
         if: env.CACHIX_AUTH_TOKEN != ''
         uses: cachix/cachix-action@v17
         with:

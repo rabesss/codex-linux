@@ -84,9 +84,19 @@ fail-soft unless explicitly marked as required for upstream-build validation.
 Optional additions belong under `linux-features/`. Feature descriptor ids are
 namespaced in patch reports and are optional by default.
 
-Upstream-drift CI should validate required descriptors against candidate DMGs
-and publish patch reports as metadata-only artifacts. A missing required patch
+Upstream-drift automation validates required descriptors against candidate DMGs
+and publishes patch reports as metadata-only artifacts. A missing required patch
 blocks promotion; it should not create a public rebuilt app payload.
+
+Filename patterns are only a targeting aid for minified Vite chunks. Required
+patches should prefer semantic detectors that prove one of three states:
+
+- the patch was applied;
+- upstream already has equivalent Linux-safe behavior;
+- the upstream surface drifted or disappeared and needs maintainer review.
+
+Patch reports should make those states explicit so maintainers know whether to
+retarget, retire, or keep a descriptor before promoting a new DMG.
 
 ## Launcher
 

@@ -1,32 +1,8 @@
-name: Upstream Build App
+name: Upstream DMG Watcher
 
 on:
   schedule:
     - cron: '30 6 * * *'
-  pull_request:
-    paths:
-      - install.sh
-      - Makefile
-      - scripts/patch-linux-window-ui.js
-      - scripts/patch-linux-window-ui.test.js
-      - scripts/patches/**
-      - scripts/ci/validate-patch-report.js
-      - scripts/ci/*candidate*.js
-      - scripts/ci/*no-payload*.js
-      - .github/workflows/upstream-build-app.yml
-  push:
-    branches:
-      - main
-    paths:
-      - install.sh
-      - Makefile
-      - scripts/patch-linux-window-ui.js
-      - scripts/patch-linux-window-ui.test.js
-      - scripts/patches/**
-      - scripts/ci/validate-patch-report.js
-      - scripts/ci/*candidate*.js
-      - scripts/ci/*no-payload*.js
-      - .github/workflows/upstream-build-app.yml
   workflow_dispatch:
 
 permissions:
@@ -40,7 +16,7 @@ env:
 
 jobs:
   build-app-upstream-dmg:
-    name: Build App Against Upstream DMG
+    name: Watch Upstream DMG
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -158,10 +134,34 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `upstream_app_version=${version}\n`);
           NODE
 
+      - name: Compare with approved upstream lock
+        id: upstream-lock
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require("node:fs");
+          const lock = JSON.parse(fs.readFileSync("release/upstream-dmg-lock.json", "utf8"));
+          const approved = lock.approved;
+          const liveSha = process.env.LIVE_DMG_SHA;
+          const liveVersion = process.env.LIVE_APP_VERSION;
+          const isDrift = approved?.sha256 !== liveSha || approved?.upstream_app_version !== liveVersion;
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `is_drift=${isDrift ? "true" : "false"}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `approved_sha256=${approved?.sha256 ?? ""}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `approved_app_version=${approved?.upstream_app_version ?? ""}\n`);
+          NODE
+        env:
+          LIVE_DMG_SHA: ${{ steps.local-dmg.outputs.sha256 }}
+          LIVE_APP_VERSION: ${{ steps.app-version.outputs.upstream_app_version }}
+
       - name: Validate required upstream patches
-        run: node scripts/ci/validate-patch-report.js patch-report.json --profile upstream-build
+        id: patch-validation
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          node scripts/ci/validate-patch-report.js patch-report.json --profile upstream-build 2>&1 | tee patch-validation.log
 
       - name: Stage candidate metadata artifacts
+        if: steps.patch-validation.outcome == 'success' && steps.upstream-lock.outputs.is_drift == 'true'
         id: candidate
         run: |
           set -euo pipefail
@@ -186,6 +186,7 @@ jobs:
             upstream-candidate-artifacts
 
       - name: Upload upstream DMG candidate metadata artifact
+        if: steps.patch-validation.outcome == 'success' && steps.upstream-lock.outputs.is_drift == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: upstream-dmg-candidate-metadata
@@ -193,10 +194,11 @@ jobs:
           if-no-files-found: error
 
       - name: Write supported-version summary
+        if: steps.patch-validation.outcome == 'success'
         run: node scripts/ci/render-supported-md.js --check --summary-out "$GITHUB_STEP_SUMMARY"
 
       - name: Open or update candidate promotion issue
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        if: steps.patch-validation.outcome == 'success' && steps.upstream-lock.outputs.is_drift == 'true'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -233,9 +235,15 @@ jobs:
           fi
 
       - name: Write build summary
+        if: steps.patch-validation.outcome == 'success'
+        env:
+          IS_DRIFT: ${{ steps.upstream-lock.outputs.is_drift }}
+          APPROVED_VERSION: ${{ steps.upstream-lock.outputs.approved_app_version }}
+          APPROVED_SHA: ${{ steps.upstream-lock.outputs.approved_sha256 }}
+          CANDIDATE_TITLE: ${{ steps.candidate.outputs.issue_title }}
         run: |
           {
-            echo "## Upstream Build App"
+            echo "## Upstream DMG Watcher"
             echo ""
             echo "- DMG URL: \`$UPSTREAM_DMG_URL\`"
             echo "- Upstream App Version: \`${{ steps.app-version.outputs.upstream_app_version }}\`"
@@ -246,9 +254,108 @@ jobs:
             echo "- DMG Size (bytes): \`${{ steps.local-dmg.outputs.size_bytes }}\`"
             echo "- Tested At (UTC): \`${{ steps.local-dmg.outputs.tested_at_utc }}\`"
             echo "- Cache Hit: \`${{ steps.dmg-cache.outputs.cache-hit || 'false' }}\`"
+            echo "- Approved App Version: \`$APPROVED_VERSION\`"
+            echo "- Approved DMG SHA-256: \`$APPROVED_SHA\`"
+            echo "- Live DMG Drift: \`$IS_DRIFT\`"
             echo "- Build command: \`make build-app DMG=<local upstream DMG>\`"
             echo "- Patch report: \`patch-report.json\`"
-            echo "- Candidate artifact: \`upstream-dmg-candidate-metadata\`"
-            echo "- Candidate promotion record: \`${{ steps.candidate.outputs.issue_title }}\`"
+            if [ "$IS_DRIFT" = "true" ]; then
+              echo "- Candidate artifact: \`upstream-dmg-candidate-metadata\`"
+              echo "- Candidate promotion record: \`$CANDIDATE_TITLE\`"
+            else
+              echo "- Candidate artifact: not created because the live DMG matches the approved pin."
+            fi
             echo "- Artifact boundary: metadata and reports only; no DMG, extracted app, or package payload."
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Stage upstream patch drift report
+        if: steps.patch-validation.outcome == 'failure'
+        id: drift
+        run: |
+          set -euo pipefail
+          rm -rf upstream-drift-artifacts
+          mkdir -p upstream-drift-artifacts
+          node scripts/ci/write-upstream-drift-report.js \
+            --metadata upstream-dmg-metadata.json \
+            --patch-report patch-report.json \
+            --validation-log patch-validation.log \
+            --metadata-out upstream-drift-artifacts/upstream-dmg-metadata.json \
+            --patch-report-out upstream-drift-artifacts/patch-report.json \
+            --validation-log-out upstream-drift-artifacts/patch-validation.log \
+            --issue-body upstream-drift-artifacts/upstream-dmg-drift-issue.md \
+            --private-path "$GITHUB_WORKSPACE" \
+            --private-path "$RUNNER_TEMP" \
+            --private-path "$UPSTREAM_DMG_PATH" \
+            --github-output "$GITHUB_OUTPUT"
+
+          node scripts/ci/validate-no-payload-artifacts.js \
+            --private-path "$GITHUB_WORKSPACE" \
+            --private-path "$RUNNER_TEMP" \
+            --private-path "$UPSTREAM_DMG_PATH" \
+            upstream-drift-artifacts
+
+      - name: Upload upstream patch drift metadata artifact
+        if: steps.patch-validation.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-dmg-patch-drift-metadata
+          path: upstream-drift-artifacts/
+          if-no-files-found: error
+
+      - name: Open or update upstream patch drift issue
+        if: steps.patch-validation.outcome == 'failure'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_TITLE: ${{ steps.drift.outputs.issue_title }}
+          ISSUE_BODY: upstream-drift-artifacts/upstream-dmg-drift-issue.md
+        run: |
+          set -euo pipefail
+
+          issues_json="$(mktemp)"
+          trap 'rm -f "$issues_json"' EXIT
+          gh issue list \
+            --repo "$GITHUB_REPOSITORY" \
+            --state open \
+            --search "$ISSUE_TITLE in:title" \
+            --json title,url > "$issues_json"
+
+          issue_url="$(node -e '
+          const fs = require("node:fs");
+          const issues = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+          const title = process.env.ISSUE_TITLE;
+          const match = issues.find((issue) => issue.title === title);
+          if (match) process.stdout.write(match.url);
+          ' "$issues_json")"
+
+          if [ -n "$issue_url" ]; then
+            gh issue edit "$issue_url" --body-file "$ISSUE_BODY"
+            echo "- Upstream patch drift issue updated: $issue_url" >> "$GITHUB_STEP_SUMMARY"
+          else
+            issue_url="$(gh issue create \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$ISSUE_TITLE" \
+              --body-file "$ISSUE_BODY")"
+            echo "- Upstream patch drift issue created: $issue_url" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Write patch drift summary
+        if: steps.patch-validation.outcome == 'failure'
+        run: |
+          {
+            echo "## Upstream DMG Watcher"
+            echo ""
+            echo "- DMG URL: \`$UPSTREAM_DMG_URL\`"
+            echo "- Upstream App Version: \`${{ steps.app-version.outputs.upstream_app_version }}\`"
+            echo "- DMG Last-Modified: \`${{ steps.upstream-metadata.outputs.last_modified }}\`"
+            echo "- DMG ETag: \`${{ steps.upstream-metadata.outputs.etag }}\`"
+            echo "- DMG Content-Length: \`${{ steps.upstream-metadata.outputs.content_length }}\`"
+            echo "- DMG SHA-256: \`${{ steps.local-dmg.outputs.sha256 }}\`"
+            echo "- Patch validation: failed; candidate promotion was blocked."
+            echo "- Drift artifact: \`upstream-dmg-patch-drift-metadata\`"
+            echo "- Artifact boundary: metadata and reports only; no DMG, extracted app, or package payload."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail when upstream patch validation failed
+        if: steps.patch-validation.outcome == 'failure'
+        run: exit 1
