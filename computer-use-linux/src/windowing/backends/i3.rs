@@ -393,4 +393,24 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn activate_window_reports_i3_refusal() {
+        let runner = FakeCommandRunner::new(vec![output_with_status(
+            0,
+            r#"[{"success":false,"error":"No matching window"}]"#,
+            "",
+        )]);
+
+        let error = activate_window_with_runner_and_socket(&runner, None, 0x400003).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("i3-msg [id=\"0x400003\"] focus did not focus the window"));
+        assert!(error.to_string().contains("No matching window"));
+        let invocations = runner.invocations();
+        assert_eq!(invocations.len(), 1);
+        assert!(invocations[0].program_is("i3-msg"));
+        assert_eq!(invocations[0].args, vec![r#"[id="0x400003"] focus"#]);
+    }
 }

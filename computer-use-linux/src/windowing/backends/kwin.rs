@@ -771,3 +771,128 @@ fn gdbus_introspect_contains(
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_kwin_script_windows_into_window_info() {
+        let uuid = "b4dfacf8-a559-43c9-8b1f-ecd5cfd78359";
+        let internal_id = "11111111-2222-3333-4444-555555555555";
+        let windows_json = r#"{
+          "backend": "kwin",
+          "pluginName": "codex_kwin_window_query_test",
+          "windows": [
+            {
+              "uuid": "{B4DFACF8-A559-43C9-8B1F-ECD5CFD78359}",
+              "caption": "Codex",
+              "desktopFile": "codex-desktop",
+              "resourceClass": "codex-desktop",
+              "resourceName": "codex",
+              "windowClass": "codex-desktop codex-desktop",
+              "pid": "68986",
+              "x": "10",
+              "y": 48,
+              "width": 1200,
+              "height": "800",
+              "workspace": "1",
+              "minimized": "false",
+              "active": true,
+              "clientType": "wayland",
+              "normalWindow": true,
+              "desktopWindow": false,
+              "skipTaskbar": false,
+              "dock": false
+            },
+            {
+              "internalId": "{11111111-2222-3333-4444-555555555555}",
+              "caption": "Minimized Browser",
+              "desktopFile": "",
+              "resourceClass": "Brave-browser",
+              "resourceName": "brave-browser",
+              "pid": 70000,
+              "x": -8,
+              "y": "30",
+              "width": "1024",
+              "height": 768,
+              "workspace": 2,
+              "minimized": true,
+              "active": false,
+              "clientType": "x11",
+              "normalWindow": "true"
+            },
+            {
+              "uuid": "{22222222-3333-4444-5555-666666666666}",
+              "caption": "Desktop",
+              "desktopWindow": true
+            },
+            {
+              "uuid": "{33333333-4444-5555-6666-777777777777}",
+              "caption": "Panel",
+              "dock": true
+            },
+            {
+              "uuid": "{44444444-5555-6666-7777-888888888888}",
+              "caption": "Skip Taskbar",
+              "skipTaskbar": true
+            }
+          ]
+        }"#;
+
+        let windows = parse_kwin_windows(windows_json).unwrap();
+
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].window_id, kwin_window_id_from_uuid(internal_id));
+        assert_eq!(windows[0].backend_window_id.as_deref(), Some(internal_id));
+        assert_eq!(windows[0].title.as_deref(), Some("Minimized Browser"));
+        assert_eq!(windows[0].app_id.as_deref(), Some("Brave-browser"));
+        assert_eq!(windows[0].wm_class.as_deref(), Some("Brave-browser"));
+        assert_eq!(windows[0].pid, Some(70000));
+        let browser_bounds = windows[0].bounds.as_ref().unwrap();
+        assert_eq!(browser_bounds.x, Some(-8));
+        assert_eq!(browser_bounds.y, Some(30));
+        assert_eq!(browser_bounds.width, 1024);
+        assert_eq!(browser_bounds.height, 768);
+        assert_eq!(windows[0].workspace, Some(2));
+        assert!(!windows[0].focused);
+        assert!(windows[0].hidden);
+        assert_eq!(windows[0].client_type.as_deref(), Some("x11"));
+        assert_eq!(windows[0].backend, KWIN_BACKEND);
+
+        assert_eq!(windows[1].window_id, kwin_window_id_from_uuid(uuid));
+        assert_eq!(windows[1].backend_window_id.as_deref(), Some(uuid));
+        assert_eq!(windows[1].title.as_deref(), Some("Codex"));
+        assert_eq!(windows[1].app_id.as_deref(), Some("codex-desktop"));
+        assert_eq!(windows[1].wm_class.as_deref(), Some("codex-desktop"));
+        assert_eq!(windows[1].pid, Some(68986));
+        let codex_bounds = windows[1].bounds.as_ref().unwrap();
+        assert_eq!(codex_bounds.x, Some(10));
+        assert_eq!(codex_bounds.y, Some(48));
+        assert_eq!(codex_bounds.width, 1200);
+        assert_eq!(codex_bounds.height, 800);
+        assert_eq!(windows[1].workspace, Some(1));
+        assert!(windows[1].focused);
+        assert!(!windows[1].hidden);
+        assert_eq!(windows[1].client_type.as_deref(), Some("wayland"));
+        assert_eq!(windows[1].backend, KWIN_BACKEND);
+    }
+
+    #[test]
+    fn rejects_malformed_kwin_script_output() {
+        let error = parse_kwin_windows("not json").unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("failed to parse KWin temporary script output"));
+    }
+
+    #[test]
+    fn rejects_kwin_windows_without_identity() {
+        let error = parse_kwin_windows(r#"{"windows":[{"caption":"No identity"}]}"#).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("KWin window did not include uuid or internalId"));
+    }
+}

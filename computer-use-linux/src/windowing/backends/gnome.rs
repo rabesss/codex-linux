@@ -307,3 +307,79 @@ fn run_probe_command(mut command: Command) -> ProbeCheck {
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zbus::zvariant::Value;
+
+    fn owned_value(value: Value<'_>) -> OwnedValue {
+        OwnedValue::try_from(value).unwrap()
+    }
+
+    #[test]
+    fn parses_introspect_properties_into_window_info() {
+        let properties = HashMap::from([
+            ("title".to_string(), owned_value(Value::from("Ghostty"))),
+            (
+                "app-id".to_string(),
+                owned_value(Value::from("com.mitchellh.ghostty.desktop")),
+            ),
+            ("wm-class".to_string(), owned_value(Value::from("Ghostty"))),
+            ("pid".to_string(), owned_value(Value::from(19313_u32))),
+            ("x".to_string(), owned_value(Value::from(12_i32))),
+            ("y".to_string(), owned_value(Value::from(34_i32))),
+            ("width".to_string(), owned_value(Value::from(1200_u32))),
+            ("height".to_string(), owned_value(Value::from(800_u32))),
+            ("workspace".to_string(), owned_value(Value::from(2_i32))),
+            ("has-focus".to_string(), owned_value(Value::from(true))),
+            ("is-hidden".to_string(), owned_value(Value::from(false))),
+            ("client-type".to_string(), owned_value(Value::from(1_u32))),
+        ]);
+
+        let window = window_from_properties(42, &properties);
+
+        assert_eq!(window.window_id, 42);
+        assert_eq!(window.title.as_deref(), Some("Ghostty"));
+        assert_eq!(
+            window.app_id.as_deref(),
+            Some("com.mitchellh.ghostty.desktop")
+        );
+        assert_eq!(window.wm_class.as_deref(), Some("Ghostty"));
+        assert_eq!(window.pid, Some(19313));
+        let bounds = window.bounds.as_ref().unwrap();
+        assert_eq!(bounds.x, Some(12));
+        assert_eq!(bounds.y, Some(34));
+        assert_eq!(bounds.width, 1200);
+        assert_eq!(bounds.height, 800);
+        assert_eq!(window.workspace, Some(2));
+        assert!(window.focused);
+        assert!(!window.hidden);
+        assert_eq!(window.client_type.as_deref(), Some("x11"));
+        assert_eq!(window.backend, GNOME_SHELL_INTROSPECT_BACKEND);
+    }
+
+    #[test]
+    fn tolerates_malformed_introspect_properties() {
+        let properties = HashMap::from([
+            ("title".to_string(), owned_value(Value::from(123_u32))),
+            ("pid".to_string(), owned_value(Value::from("not-a-pid"))),
+            ("width".to_string(), owned_value(Value::from("wide"))),
+            ("height".to_string(), owned_value(Value::from(800_u32))),
+            ("has-focus".to_string(), owned_value(Value::from("true"))),
+            ("is-hidden".to_string(), owned_value(Value::from("false"))),
+            ("client-type".to_string(), owned_value(Value::from(99_u32))),
+        ]);
+
+        let window = window_from_properties(7, &properties);
+
+        assert_eq!(window.window_id, 7);
+        assert_eq!(window.title, None);
+        assert_eq!(window.pid, None);
+        assert!(window.bounds.is_none());
+        assert!(!window.focused);
+        assert!(!window.hidden);
+        assert_eq!(window.client_type.as_deref(), Some("unknown"));
+        assert_eq!(window.backend, GNOME_SHELL_INTROSPECT_BACKEND);
+    }
+}
