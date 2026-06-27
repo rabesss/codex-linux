@@ -111,7 +111,7 @@ function applyWebviewRuntimePatch(source) {
   if (source.includes(`codexLinuxWrapperUpdaterVersion=`)) {
     return source;
   }
-  return source + wrapperRuntimeSource();
+  return `${source}\n${wrapperRuntimeSource()}`;
 }
 
 function applyWrapperUpdateSettingsPatch(source) {

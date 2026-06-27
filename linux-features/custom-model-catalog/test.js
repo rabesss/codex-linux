@@ -1671,6 +1671,20 @@ test("start conversation routing patch supports Electron 42 base instructions", 
   assert.match(patched, /codexLinuxCustomModelApplyRouting\(c,e\),c=yt\(c,a\)/);
 });
 
+test("start conversation routing patch keeps assignment anchors parseable inside comma initializers", () => {
+  const source = [
+    "var WR,GR,nhe=e((()=>{qN(),UR(),WR=5e3,GR=class{dynamicToolsForThreadStartRequests=new Map;",
+    "async buildNewConversationParams(e,t,n,r,i,a,o,s){let c=await C(e,t,()=>this.params.fetchFromHost(`get-copilot-api-proxy-info`),n,r,()=>this.buildThreadCodexConfig(n),o,i,{threadSource:s?.threadSource});if(c=O(c,a),c=await Zg(this.params.fetchFromHost,this.params.requestClient,c,n))return c}",
+    "}}));",
+  ].join("");
+  const patched = applyPatchTwice(applyCustomModelRoutingPatch, source);
+
+  assert.match(patched, /UR\(\),void 0;function codexLinuxCustomModelSlugKey/);
+  assert.doesNotMatch(patched, /UR\(\),function codexLinuxCustomModelSlugKey/);
+  assert.match(patched, /codexLinuxCustomModelApplyRouting\(c,e\),c=O\(c,a\)/);
+  assert.doesNotThrow(() => new Function(patched));
+});
+
 test("start conversation routing patch preserves custom provider during Electron 42 thread creation", () => {
   const source = [
     "var md=5e3,hd=class{dynamicToolsForThreadStartRequests=new Map;",

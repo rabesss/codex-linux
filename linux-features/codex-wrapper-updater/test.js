@@ -75,6 +75,13 @@ test("webview runtime renders dev-mode and installed-sha chips", () => {
   assert.match(patched, /\\u2193/);
 });
 
+test("webview runtime starts on a new line after source map comments", () => {
+  const patched = applyWebviewRuntimePatch("import './app.js';\n//# sourceMappingURL=index.js.map");
+
+  assert.match(patched, /sourceMappingURL=index\.js\.map\n;\(\(\)=>\{/);
+  assert.doesNotMatch(patched, /sourceMappingURL=index\.js\.map;\(\(\)=>\{/);
+});
+
 test("settings patch adds wrapper update toggle", () => {
   const source =
     `var KEYS={autoUpdateOnExit:"codex-linux-auto-update-on-exit"};` +

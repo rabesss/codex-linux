@@ -384,7 +384,8 @@ function applyCustomModelRoutingPatch(source) {
     if (patched.includes(ROUTING_HELPER_NAME) || !patched.includes(insertion)) {
       continue;
     }
-    patched = patched.replace(insertion, `${ROUTING_HELPER_SOURCE}${insertion}`);
+    const helperPrefix = insertion.startsWith("var ") ? "" : "void 0;";
+    patched = patched.replace(insertion, `${helperPrefix}${ROUTING_HELPER_SOURCE}${insertion}`);
     insertionApplied = true;
     break;
   }
