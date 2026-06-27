@@ -198,6 +198,37 @@ Common commands:
 The package scripts repackage `codex-app/`; they do not download or extract the
 DMG themselves.
 
+## Linux Computer Use Backend
+
+This repository bundles a local source copy of the Linux Computer Use backend
+under `computer-use-linux/`. The build compiles that code as
+`codex-computer-use-linux` and stages it as the built-in Linux desktop-control
+plugin used for screenshots, window discovery, accessibility-tree inspection,
+and local input actions.
+
+That backend is related to
+[`agent-sh/computer-use-linux`](https://github.com/agent-sh/computer-use-linux),
+the standalone/general Linux Computer Use project. It is source-vendored here:
+the app does not download or execute code from that repository at runtime, and
+this directory is not a Git submodule pinned to an upstream commit.
+
+Changes flow through a manual sync boundary:
+
+- generic Linux desktop-control fixes can be ported between this repository and
+  `agent-sh/computer-use-linux`;
+- Codex-specific names, launch glue, identity files, and bundled app/plugin
+  integration stay in this repository;
+- automation opens a `computer-use-sync` issue when `computer-use-linux/**`
+  changes on `main`, so maintainers can decide whether a standalone sync is
+  needed.
+
+The sync marker is the crate version in `computer-use-linux/Cargo.toml`. A
+version mismatch between this bundled crate and the standalone crate means the
+two codebases have not been deliberately reconciled yet. To consume standalone
+updates, compare the standalone repo against `computer-use-linux/`, port the
+generic changes intentionally, keep Codex-only integration local, and bump the
+sync marker after review.
+
 ## Optional Linux Features
 
 Core Linux compatibility is part of the base build. Optional features live
