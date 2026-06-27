@@ -65,7 +65,27 @@ function regexpTest(filenamePattern, name) {
   return filenamePattern.test(name);
 }
 
-function patchAssetFiles(extractedDir, filenamePattern, patchFn, missingWarnMessage) {
+function assetMarkerMatches(source, marker) {
+  if (marker == null) {
+    return true;
+  }
+  if (typeof marker === "string") {
+    return source.includes(marker);
+  }
+  if (marker instanceof RegExp) {
+    marker.lastIndex = 0;
+    return marker.test(source);
+  }
+  if (Array.isArray(marker)) {
+    return marker.every((entry) => assetMarkerMatches(source, entry));
+  }
+  if (typeof marker === "function") {
+    return marker(source);
+  }
+  throw new Error("Unsupported webview asset marker type");
+}
+
+function patchAssetFiles(extractedDir, filenamePattern, patchFn, missingWarnMessage, options = {}) {
   const webviewAssetsDir = path.join(extractedDir, "webview", "assets");
   if (!fs.existsSync(webviewAssetsDir)) {
     console.warn(
@@ -77,6 +97,12 @@ function patchAssetFiles(extractedDir, filenamePattern, patchFn, missingWarnMess
   const candidates = fs
     .readdirSync(webviewAssetsDir)
     .filter((name) => regexpTest(filenamePattern, name))
+    .filter((name) => {
+      if (options.assetMarker == null) {
+        return true;
+      }
+      return assetMarkerMatches(fs.readFileSync(path.join(webviewAssetsDir, name), "utf8"), options.assetMarker);
+    })
     .sort();
 
   if (candidates.length === 0) {

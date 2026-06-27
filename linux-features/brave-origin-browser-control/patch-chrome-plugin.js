@@ -309,6 +309,10 @@ patchFileFirstMatch(path.join(scriptsDir, "browser-client.mjs"), {
       oldText: String.raw`codexLinuxChromeUserDataDirectories=()=>H7()==="linux"?[z7(W7(),".config","BraveSoftware","Brave-Browser"),z7(W7(),".config","google-chrome"),z7(W7(),".config","google-chrome-beta"),z7(W7(),".config","google-chrome-unstable"),z7(W7(),".config","chromium")]:[Rd]`,
       newText: String.raw`codexLinuxChromeUserDataDirectories=()=>H7()==="linux"?[z7(W7(),".config","BraveSoftware","Brave-Origin-Nightly"),z7(W7(),".config","BraveSoftware","Brave-Browser"),z7(W7(),".config","google-chrome"),z7(W7(),".config","google-chrome-beta"),z7(W7(),".config","google-chrome-unstable"),z7(W7(),".config","chromium")]:[Rd]`,
     },
+    {
+      oldText: String.raw`codexLinuxChromeUserDataDirectories=()=>fH()==="linux"?[dH(pH(),".config","BraveSoftware","Brave-Browser"),dH(pH(),".config","google-chrome"),dH(pH(),".config","google-chrome-beta"),dH(pH(),".config","google-chrome-unstable"),dH(pH(),".config","chromium")]:[Xd]`,
+      newText: String.raw`codexLinuxChromeUserDataDirectories=()=>fH()==="linux"?[dH(pH(),".config","BraveSoftware","Brave-Origin-Nightly"),dH(pH(),".config","BraveSoftware","Brave-Browser"),dH(pH(),".config","google-chrome"),dH(pH(),".config","google-chrome-beta"),dH(pH(),".config","google-chrome-unstable"),dH(pH(),".config","chromium")]:[Xd]`,
+    },
   ],
   alreadyText: '".config","BraveSoftware","Brave-Origin-Nightly"',
 });

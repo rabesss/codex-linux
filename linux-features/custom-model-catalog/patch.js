@@ -6,6 +6,11 @@ const path = require("node:path");
 const MODEL_PICKER_VARIANTS = [
   {
     name: "current model query filter",
+    needle: "let s=[],c=null,l=o&&e!==`amazonBedrock`,",
+    replacement: "let s=[],c=null,l=!1,",
+  },
+  {
+    name: "legacy model query filter",
     needle: "let a=[],o=null,s=i&&e!==`amazonBedrock`;",
     replacement: "let a=[],o=null,s=!1;",
   },
@@ -39,6 +44,8 @@ const MODEL_QUERY_SHIM_HELPER_SOURCE = [
 const MODEL_QUERY_SHIM_INSERTION = "var x=100,S=[`models`,`list`];";
 const MODEL_QUERY_SHIM_INSERTION_REGEX =
   /var [A-Za-z_$][\w$]*=100,[A-Za-z_$][\w$]*=\[`models`,`list`\];/u;
+const MODEL_QUERY_SHIM_CURRENT_INSERTION_REGEX =
+  /function [A-Za-z_$][\w$]*\(\{authMethod:[A-Za-z_$][\w$]*,availableModels:[A-Za-z_$][\w$]*,defaultModel:[A-Za-z_$][\w$]*,/u;
 const MODEL_QUERY_SHIM_NEEDLE =
   "queryFn:()=>i(`list-models-for-host`,{hostId:a,includeHidden:!0,cursor:null,limit:s}),select:";
 const MODEL_QUERY_SHIM_PATCH =
@@ -56,6 +63,10 @@ const RECENT_THREADS_PROVIDER_REGEX =
   /(listRecentThreads\(\{[^}]*\}\)\{return this\.params\.requestClient\.sendRequest\(`thread\/list`,\{[^}]*?modelProviders:)null(,archived:!1,sourceKinds:[^}]+\}\)\})/u;
 const RECENT_THREADS_PROVIDER_PATCHED_REGEX =
   /listRecentThreads\(\{[^}]*\}\)\{return this\.params\.requestClient\.sendRequest\(`thread\/list`,\{[^}]*?modelProviders:\[\],archived:!1,sourceKinds:[^}]+\}\)\}/u;
+const RECENT_THREADS_PARAMS_PROVIDER_REGEX =
+  /(listRecentThreads\(\{[^}]*\}\)\{let [A-Za-z_$][\w$]*=\{[^}]*?modelProviders:)null(,archived:!1,sourceKinds:[^}]+\};return this\.params\.requestClient\.sendRequest\(`thread\/list`,[A-Za-z_$][\w$]*\)\})/u;
+const RECENT_THREADS_PARAMS_PROVIDER_PATCHED_REGEX =
+  /listRecentThreads\(\{[^}]*\}\)\{let [A-Za-z_$][\w$]*=\{[^}]*?modelProviders:\[\],archived:!1,sourceKinds:[^}]+\};return this\.params\.requestClient\.sendRequest\(`thread\/list`,[A-Za-z_$][\w$]*\)\}/u;
 const ROUTING_HELPER_NAME = "codexLinuxCustomModelApplyRouting";
 const ROUTING_HELPER_SOURCE = [
   "function codexLinuxCustomModelSlugKey(e){return typeof e==`string`?e.trim().toLowerCase():``}",
@@ -70,15 +81,17 @@ const ROUTING_HELPER_SOURCE = [
   "function codexLinuxCustomModelApplyThreadSettings(e){let t=e?.model??e?.collaborationMode?.settings?.model;if(!codexLinuxCustomModelCustomSlug(t))return e;let n=codexLinuxCustomModelApplyRouting({config:e?.config??{}},t);return{...e,model:n.model,modelProvider:n.modelProvider,config:n.config,collaborationMode:e?.collaborationMode==null?e?.collaborationMode:{...e.collaborationMode,settings:{...e.collaborationMode.settings,model:n.model}}}}",
   "function codexLinuxCustomModelNeedsProviderResume(e,t){let n=t?.model??t?.collaborationMode?.settings?.model;if(typeof n!=`string`||n.trim().length===0)return!1;let r=e?.modelProvider??e?.model_provider??codexLinuxCustomModelProviderForSlug(e?.latestModel??e?.latestCollaborationMode?.settings?.model),i=codexLinuxCustomModelProviderForSlug(n);return(r??null)!==(i??null)}",
 ].join("");
-const ROUTING_INSERTION_VARIANTS = ["var kg=5e3,Ag=class{", "var Qg=5e3,$g=class{"];
+const ROUTING_INSERTION_VARIANTS = ["var kg=5e3,Ag=class{", "var Qg=5e3,$g=class{", "WR=5e3,GR=class{"];
 const ROUTING_INSERTION_REGEX =
   /var [A-Za-z_$][\w$]*=5e3,[A-Za-z_$][\w$]*=class\{dynamicToolsForThreadStartRequests=/u;
 const ROUTING_NEEDLE_VARIANTS = [
+  "let c=await en(e,await VI(t,()=>this.params.requestClient.sendRequest(`configRequirements/read`,void 0,{timeoutMs:M_})),()=>this.params.fetchFromHost(`get-copilot-api-proxy-info`),n,r,()=>this.buildThreadCodexConfig(n),o,i,{baseInstructions:s?.baseInstructions,threadSource:s?.threadSource});if(c=ct(c,a),",
   "let c=await C(e,t,()=>this.params.fetchFromHost(`get-copilot-api-proxy-info`),n,r,()=>this.buildThreadCodexConfig(n),o,i,{persistExtendedHistory:s?.persistExtendedHistory??!1,threadSource:s?.threadSource});if(c=ae(c,a),",
   "let c=await C(e,t,()=>this.params.fetchFromHost(`get-copilot-api-proxy-info`),n,r,()=>this.buildThreadCodexConfig(n),o,i,{threadSource:s?.threadSource});if(c=O(c,a),",
   "let c=await et(e,t,()=>this.params.fetchFromHost(`get-copilot-api-proxy-info`),n,r,()=>this.buildThreadCodexConfig(n),o,i,{baseInstructions:s?.baseInstructions,threadSource:s?.threadSource});if(c=yt(c,a),",
 ];
 const ROUTING_PATCH_VARIANTS = [
+  "let c=await en(e,await VI(t,()=>this.params.requestClient.sendRequest(`configRequirements/read`,void 0,{timeoutMs:M_})),()=>this.params.fetchFromHost(`get-copilot-api-proxy-info`),n,r,()=>this.buildThreadCodexConfig(n),o,i,{baseInstructions:s?.baseInstructions,threadSource:s?.threadSource});if(c=codexLinuxCustomModelApplyRouting(c,e),c=ct(c,a),",
   "let c=await C(e,t,()=>this.params.fetchFromHost(`get-copilot-api-proxy-info`),n,r,()=>this.buildThreadCodexConfig(n),o,i,{persistExtendedHistory:s?.persistExtendedHistory??!1,threadSource:s?.threadSource});if(c=codexLinuxCustomModelApplyRouting(c,e),c=ae(c,a),",
   "let c=await C(e,t,()=>this.params.fetchFromHost(`get-copilot-api-proxy-info`),n,r,()=>this.buildThreadCodexConfig(n),o,i,{threadSource:s?.threadSource});if(c=codexLinuxCustomModelApplyRouting(c,e),c=O(c,a),",
   "let c=await et(e,t,()=>this.params.fetchFromHost(`get-copilot-api-proxy-info`),n,r,()=>this.buildThreadCodexConfig(n),o,i,{baseInstructions:s?.baseInstructions,threadSource:s?.threadSource});if(c=codexLinuxCustomModelApplyRouting(c,e),c=yt(c,a),",
@@ -96,6 +109,8 @@ const FORK_ROUTING_REGEX =
   /let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\.buildThreadCodexConfig\(([A-Za-z_$][\w$]*)\?\?([A-Za-z_$][\w$]*)\?\.cwd\?\?null\),([A-Za-z_$][\w$]*)=await \2\.sendRequest\(`thread\/fork`,\{threadId:([A-Za-z_$][\w$]*),path:([A-Za-z_$][\w$]*)\?\?null,cwd:\3,threadSource:`user`,\.\.\.\1==null\?\{\}:\{config:\1\},/u;
 const FORK_ROUTING_CURRENT_REGEX =
   /let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\.buildThreadCodexConfig\(([A-Za-z_$][\w$]*)\?\?([A-Za-z_$][\w$]*)\?\.cwd\?\?null\),([A-Za-z_$][\w$]*)=await \2\.sendRequest\(`thread\/fork`,\{threadId:([A-Za-z_$][\w$]*),path:([A-Za-z_$][\w$]*)\?\?null,cwd:\3,threadSource:([A-Za-z_$][\w$]*),\.\.\.\1==null\?\{\}:\{config:\1\},/u;
+const FORK_ROUTING_INLINE_CONFIG_REGEX =
+  /let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\.buildThreadCodexConfig\(([A-Za-z_$][\w$]*)\?\?([A-Za-z_$][\w$]*)\?\.cwd\?\?null\),([A-Za-z_$][\w$]*)=await \2\.sendRequest\(`thread\/fork`,\{threadId:([A-Za-z_$][\w$]*),path:([A-Za-z_$][\w$]*)\?\?null,cwd:\3,threadSource:([A-Za-z_$][\w$]*),config:\1\?\?void 0,/u;
 const FORK_ROUTING_MARKER =
   "codexLinuxCustomModelApplyRouting({config:await";
 const THREAD_SETTINGS_UPDATE_REGEX =
@@ -150,6 +165,10 @@ const MODEL_PROVIDER_GROUP_NEEDLE =
   "Y=c?.map(e=>(0,T.jsx)(ee,{modelOption:e,selectedModel:s,selectedReasoningEffort:E,selectedServiceTier:k,selectedServiceTierIconKind:A,onSelect:(e,t)=>{_(e,t),h?.()}},e.model)),";
 const MODEL_PROVIDER_GROUP_PATCH =
   "Y=codexLinuxCustomModelGroupModelOptions(c,e=>(0,T.jsx)(ee,{modelOption:e,selectedModel:s,selectedReasoningEffort:E,selectedServiceTier:k,selectedServiceTierIconKind:A,onSelect:(e,t)=>{_(e,t),h?.()}},e.model),T,p),";
+const MODEL_PROVIDER_GROUP_CURRENT_NEEDLE =
+  "fe=a?.map(e=>(0,DY.jsx)(Hut,{modelOption:e,selectedModel:i,selectedReasoningEffort:h,selectedServiceTier:E,selectedServiceTierIconKind:D,onSelect:(e,t)=>{d(e,t),M||u?.()}},e.model)),";
+const MODEL_PROVIDER_GROUP_CURRENT_PATCH =
+  "fe=codexLinuxCustomModelGroupModelOptions(a,e=>(0,DY.jsx)(Hut,{modelOption:e,selectedModel:i,selectedReasoningEffort:h,selectedServiceTier:E,selectedServiceTierIconKind:D,onSelect:(e,t)=>{d(e,t),M||u?.()}},e.model),DY,Zf),";
 const COMPOSER_ATTACHMENT_PROP_NEEDLE =
   "onOpenGoalEditor:_c,supportsFileAttachments:ui!==`cloud`||!bi&&Ti===`local`,supportsRemoteFileAttachments:ui!==`cloud`&&Ti!==`local`});";
 const COMPOSER_ATTACHMENT_PROP_PATCH =
@@ -317,12 +336,14 @@ function applyCustomModelListMergePatch(source) {
     throw new Error("Required custom model catalog patch failed: model query fetch needle not found");
   }
   const insertionMatch = source.match(MODEL_QUERY_SHIM_INSERTION_REGEX);
-  if (insertionMatch == null) {
+  const currentInsertionMatch = source.match(MODEL_QUERY_SHIM_CURRENT_INSERTION_REGEX);
+  if (insertionMatch == null && currentInsertionMatch == null) {
     throw new Error("Required custom model catalog patch failed: model query insertion point not found");
   }
 
+  const insertionPoint = insertionMatch?.[0] ?? currentInsertionMatch[0];
   return source
-    .replace(insertionMatch[0], `${MODEL_QUERY_SHIM_HELPER_SOURCE}${insertionMatch[0]}`)
+    .replace(insertionPoint, `${MODEL_QUERY_SHIM_HELPER_SOURCE}${insertionPoint}`)
     .replace(
       MODEL_QUERY_SHIM_REGEX,
       `queryFn:async()=>codexLinuxCustomModelMergeListModels(await ${queryMatch[1]}(\`list-models-for-host\`,{hostId:${queryMatch[2]},includeHidden:!0,cursor:null,limit:${queryMatch[3]}})),select:`,
@@ -330,7 +351,11 @@ function applyCustomModelListMergePatch(source) {
 }
 
 function applyCustomModelRecentThreadsPatch(source) {
-  if (RECENT_THREADS_PATCHED_REGEX.test(source) || RECENT_THREADS_PROVIDER_PATCHED_REGEX.test(source)) {
+  if (
+    RECENT_THREADS_PATCHED_REGEX.test(source) ||
+    RECENT_THREADS_PROVIDER_PATCHED_REGEX.test(source) ||
+    RECENT_THREADS_PARAMS_PROVIDER_PATCHED_REGEX.test(source)
+  ) {
     return source;
   }
 
@@ -343,7 +368,10 @@ function applyCustomModelRecentThreadsPatch(source) {
   }
 
   if (!RECENT_THREADS_PROVIDER_REGEX.test(source)) {
-    throw new Error("Required custom model catalog patch failed: recent thread provider filter needle not found");
+    if (!RECENT_THREADS_PARAMS_PROVIDER_REGEX.test(source)) {
+      throw new Error("Required custom model catalog patch failed: recent thread provider filter needle not found");
+    }
+    return source.replace(RECENT_THREADS_PARAMS_PROVIDER_REGEX, "$1[]$2");
   }
 
   return source.replace(RECENT_THREADS_PROVIDER_REGEX, "$1[]$2");
@@ -421,12 +449,15 @@ function applyCustomModelRoutingPatch(source) {
   if (!autoTitlePatchedRegex.test(patched) && patched.includes("skipAutoTitleGeneration")) {
     const autoTitleRegex =
       /(async startConversation\(\{[^}]{0,1200}?collaborationMode:([A-Za-z_$][\w$]*)[^}]{0,1200}?skipAutoTitleGeneration:[A-Za-z_$][\w$]*=)!1(,additionalDeveloperInstructions:)/u;
-    if (!autoTitleRegex.test(patched)) {
+    const currentAutoTitleRegex =
+      /(async startConversation\([^)]*\)\{let\{[\s\S]{0,1200}?collaborationMode:([A-Za-z_$][\w$]*)[\s\S]{0,1200}?skipAutoTitleGeneration:[A-Za-z_$][\w$]*=)!1(,additionalDeveloperInstructions:)/u;
+    const autoTitleMatch = patched.match(autoTitleRegex) ?? patched.match(currentAutoTitleRegex);
+    if (autoTitleMatch == null) {
       throw new Error("Required custom model catalog patch failed: custom model auto-title guard needle not found");
     }
     patched = patched.replace(
-      autoTitleRegex,
-      "$1codexLinuxCustomModelCustomSlug($2?.settings?.model)$3",
+      autoTitleMatch[0],
+      `${autoTitleMatch[1]}codexLinuxCustomModelCustomSlug(${autoTitleMatch[2]}?.settings?.model)${autoTitleMatch[3]}`,
     );
   }
 
@@ -440,6 +471,25 @@ function applyCustomModelForkRoutingPatch(source) {
   if (!source.includes(ROUTING_HELPER_NAME)) {
     throw new Error(
       "Required custom model catalog patch failed: routing helper must be injected before fork routing patch",
+    );
+  }
+
+  const inlineConfigMatch = source.match(FORK_ROUTING_INLINE_CONFIG_REGEX);
+  if (inlineConfigMatch != null) {
+    return source.replace(
+      FORK_ROUTING_INLINE_CONFIG_REGEX,
+      (
+        _match,
+        configVar,
+        managerVar,
+        cwdVar,
+        conversationVar,
+        responseVar,
+        threadIdVar,
+        pathVar,
+        threadSourceVar,
+      ) =>
+        `let ${configVar}=codexLinuxCustomModelApplyRouting({config:await ${managerVar}.buildThreadCodexConfig(${cwdVar}??${conversationVar}?.cwd??null)},${conversationVar}?.latestModel??${conversationVar}?.latestCollaborationMode?.settings?.model??\`\`),${responseVar}=await ${managerVar}.sendRequest(\`thread/fork\`,{threadId:${threadIdVar},path:${pathVar}??null,cwd:${cwdVar},threadSource:${threadSourceVar},...${configVar}.model==null?{}:{model:${configVar}.model},...${configVar}.modelProvider==null?{}:{modelProvider:${configVar}.modelProvider},...${configVar}.config==null?{}:{config:${configVar}.config},`,
     );
   }
 
@@ -529,11 +579,18 @@ function applyCustomModelThreadSettingsRoutingPatch(source) {
 
   const threadId = methodMatch[1];
   const settings = methodMatch[2];
+  const stateUpdaterMatch = methodSource.match(
+    new RegExp(
+      `this\\.updateConversationState\\(${threadId},[A-Za-z_$][\\w$]*=>\\{([A-Za-z_$][\\w$]*)\\([A-Za-z_$][\\w$]*,${settings}\\)\\}`,
+      "u",
+    ),
+  );
+  const stateUpdater = stateUpdaterMatch?.[1] ?? "zp";
   const providerResume =
     `if(codexLinuxCustomModelNeedsProviderResume(this.getConversation(${threadId}),${settings})){` +
     `let codexLinuxTargetModel=${settings}?.model??${settings}?.collaborationMode?.settings?.model??null;` +
     `await this.sendRequest(\`thread/unsubscribe\`,{threadId:${threadId}}),this.streamState.removeConversation(${threadId}),` +
-    `this.updateConversationState(${threadId},e=>{zp(e,${settings}),e.resumeState=\`needs_resume\`},!1);` +
+    `this.updateConversationState(${threadId},e=>{${stateUpdater}(e,${settings}),e.resumeState=\`needs_resume\`},!1);` +
     `let codexLinuxConversation=this.getConversation(${threadId});` +
     `await this.resumeConversationForUnavailableOwner({conversationId:${threadId},model:codexLinuxTargetModel,serviceTier:${settings}?.serviceTier??null,reasoningEffort:${settings}?.effort??null,workspaceRoots:[codexLinuxConversation?.cwd??\`/\`],permissions:codexLinuxConversation?.currentPermissions??void 0,collaborationMode:codexLinuxConversation?.latestCollaborationMode??${settings}?.collaborationMode??null});return}`;
 
@@ -659,10 +716,13 @@ function applyCustomModelTooltipPatch(source) {
 }
 
 function applyCustomModelProviderGroupPatch(source) {
-  if (source.includes(MODEL_PROVIDER_GROUP_HELPER_NAME) && source.includes(MODEL_PROVIDER_GROUP_PATCH)) {
+  if (
+    source.includes(MODEL_PROVIDER_GROUP_HELPER_NAME) &&
+    (source.includes(MODEL_PROVIDER_GROUP_PATCH) || source.includes(MODEL_PROVIDER_GROUP_CURRENT_PATCH))
+  ) {
     return source;
   }
-  if (!source.includes(MODEL_PROVIDER_GROUP_NEEDLE)) {
+  if (!source.includes(MODEL_PROVIDER_GROUP_NEEDLE) && !source.includes(MODEL_PROVIDER_GROUP_CURRENT_NEEDLE)) {
     throw new Error("Required custom model catalog patch failed: model provider grouping needle not found");
   }
   const insertionMatch = source.match(MODEL_PROVIDER_GROUP_INSERTION_REGEX);
@@ -670,16 +730,24 @@ function applyCustomModelProviderGroupPatch(source) {
     throw new Error("Required custom model catalog patch failed: model provider grouping insertion point not found");
   }
 
+  const needle = source.includes(MODEL_PROVIDER_GROUP_CURRENT_NEEDLE)
+    ? MODEL_PROVIDER_GROUP_CURRENT_NEEDLE
+    : MODEL_PROVIDER_GROUP_NEEDLE;
+  const patch = needle === MODEL_PROVIDER_GROUP_CURRENT_NEEDLE
+    ? MODEL_PROVIDER_GROUP_CURRENT_PATCH
+    : MODEL_PROVIDER_GROUP_PATCH;
+
   return source
     .replace(insertionMatch[0], `${MODEL_PROVIDER_GROUP_HELPER_SOURCE}${insertionMatch[0]}`)
-    .replace(MODEL_PROVIDER_GROUP_NEEDLE, MODEL_PROVIDER_GROUP_PATCH);
+    .replace(needle, patch);
 }
 
 function applyCustomModelComposerAttachmentPropPatch(source) {
   if (
     source.includes(COMPOSER_ATTACHMENT_PROP_PATCH) ||
     /onOpenGoalEditor:[A-Za-z_$][\w$]*,supportsImageInputs:[A-Za-z_$][\w$]*,supportsFileAttachments:/u.test(source) ||
-    /[A-Za-z_$][\w$]*=Qy\(\{[^{}]{0,1200}?setFileAttachments:[A-Za-z_$][\w$]*,supportsImageInputs:[A-Za-z_$][\w$]*,supportsFileAttachments:/u.test(source)
+    /[A-Za-z_$][\w$]*=Qy\(\{[^{}]{0,1200}?setFileAttachments:[A-Za-z_$][\w$]*,supportsImageInputs:[A-Za-z_$][\w$]*,supportsFileAttachments:/u.test(source) ||
+    /[A-Za-z_$][\w$]*=lU\(\{[^{}]{0,1800}?setFileAttachments:[A-Za-z_$][\w$]*,supportsImageInputs:[A-Za-z_$][\w$]*,supportsFileAttachments:/u.test(source)
   ) {
     return source;
   }
@@ -695,6 +763,15 @@ function applyCustomModelComposerAttachmentPropPatch(source) {
     return source.replace(
       currentPropMatch[0],
       `${currentPropMatch[1]}supportsImageInputs:${capabilityMatch[1]},${currentPropMatch[2]}`,
+    );
+  }
+  const currentAttachmentMenuMatch = source.match(
+    /([A-Za-z_$][\w$]*=lU\(\{[^{}]{0,1800}?setFileAttachments:[A-Za-z_$][\w$]*,)(supportsFileAttachments:)/u,
+  );
+  if (capabilityMatch != null && currentAttachmentMenuMatch != null) {
+    return source.replace(
+      currentAttachmentMenuMatch[0],
+      `${currentAttachmentMenuMatch[1]}supportsImageInputs:${capabilityMatch[1]},${currentAttachmentMenuMatch[2]}`,
     );
   }
   const propMatch = source.match(COMPOSER_ATTACHMENT_PROP_REGEX);
@@ -723,13 +800,20 @@ function replaceRequiredVariant(source, variants, description) {
 }
 
 function applyCustomModelAttachmentMenuPatch(source) {
-  if (source.includes("function qy(e){") && source.includes("async function Jy(e){")) {
+  if (source.includes("codexLinuxOtherFiles=e.supportsImageInputs?r:[...r,...n]")) {
+    return source;
+  }
+  const electron42MenuMatch = source.match(
+    /function ([A-Za-z_$][\w$]*)\(e\)\{let t=\[\{disabled:!1,icon:e\.supportsFileAttachments\?`paperclip`:`image`,id:`pick-local-files`,label:e\.supportsFileAttachments\?e\.labels\.filesAndFolders:e\.labels\.addPhotos,run:\(\)=>([A-Za-z_$][\w$]*)\(e\)\}\]/u,
+  );
+  if (electron42MenuMatch != null && source.includes(`async function ${electron42MenuMatch[2]}(e){`)) {
+    const pickerFunctionName = electron42MenuMatch[2];
     let current = source.replaceAll(
       "||codexLinuxOtherFiles.length===0",
       "||r.length===0",
     );
-    const pickerStart = current.indexOf("async function Jy(e){");
-    const pickerEnd = current.indexOf("function ", pickerStart + "async function Jy(e){".length);
+    const pickerStart = current.indexOf(`async function ${pickerFunctionName}(e){`);
+    const pickerEnd = current.indexOf("function ", pickerStart + `async function ${pickerFunctionName}(e){`.length);
     if (pickerEnd === -1) {
       throw new Error("Required custom model catalog patch failed: Electron 42 attachment picker boundary not found");
     }
@@ -757,10 +841,10 @@ function applyCustomModelAttachmentMenuPatch(source) {
       ",i=n.length===0?[]:await e.loadImageDataUrls(n);",
       ",codexLinuxOtherFiles=e.supportsImageInputs?r:[...r,...n],i=e.supportsImageInputs&&n.length!==0?await e.loadImageDataUrls(n):[];",
     );
-    const updatedPickerStart = current.indexOf("async function Jy(e){");
+    const updatedPickerStart = current.indexOf(`async function ${pickerFunctionName}(e){`);
     const updatedPickerEnd = current.indexOf(
       "function ",
-      updatedPickerStart + "async function Jy(e){".length,
+      updatedPickerStart + `async function ${pickerFunctionName}(e){`.length,
     );
     pickerSource = current.slice(updatedPickerStart, updatedPickerEnd).replace(
       "!e.supportsFileAttachments||r.length===0",
@@ -770,12 +854,12 @@ function applyCustomModelAttachmentMenuPatch(source) {
     current = current.replace("uploadLocalFileAttachments(r)", "uploadLocalFileAttachments(codexLinuxOtherFiles)");
     current = current.replace("addFileAttachments(r)", "addFileAttachments(codexLinuxOtherFiles)");
     current = current.replace(
-      "supportsFileAttachments:v,supportsRemoteFileAttachments:y}=e",
-      "supportsFileAttachments:v,supportsImageInputs:codexLinuxCustomModelSupportsImageInputs,supportsRemoteFileAttachments:y}=e",
+      /(supportsFileAttachments:[A-Za-z_$][\w$]*,)(supportsRemoteFileAttachments:[A-Za-z_$][\w$]*\}=e)/u,
+      "$1supportsImageInputs:codexLinuxCustomModelSupportsImageInputs,$2",
     );
     current = current.replace(
-      "supportsFileAttachments:v,uploadLocalFileAttachments:",
-      "supportsFileAttachments:v,supportsImageInputs:codexLinuxCustomModelSupportsImageInputs,uploadLocalFileAttachments:",
+      /(supportsFileAttachments:[A-Za-z_$][\w$]*,)(uploadLocalFileAttachments:)/u,
+      "$1supportsImageInputs:codexLinuxCustomModelSupportsImageInputs,$2",
     );
     if (current === source || !current.includes("codexLinuxOtherFiles=e.supportsImageInputs?r:[...r,...n]")) {
       throw new Error("Required custom model catalog patch failed: Electron 42 attachment menu needle not found");
@@ -886,13 +970,25 @@ function applyCustomModelAttachmentMenuPatch(source) {
   return patched;
 }
 
+const MODEL_PICKER_ASSET_PATTERN =
+  /^(?:model-list-filter-.*|app-initial~app-main~onboarding-page-[A-Za-z0-9_-]+)\.js$/;
+const MODEL_QUERY_ASSET_PATTERN =
+  /^(?:model-queries-.*|app-initial~app-main~onboarding-page-[A-Za-z0-9_-]+)\.js$/;
+const ROUTING_ASSET_PATTERN =
+  /^(?:thread-context-inputs-.*|app-initial~app-main~worktree-init-v2-page~remote-conversation-page~new-thread-panel-page~o~[A-Za-z0-9_-]+)\.js$/;
+const MODEL_DROPDOWN_ASSET_PATTERN =
+  /^(?:model-and-reasoning-dropdown-[A-Za-z0-9_-]+|app-initial~app-main~onboarding-page-[A-Za-z0-9_-]+)\.js$/;
+const COMPOSER_ASSET_PATTERN =
+  /^(?:composer-(?!controller-)[A-Za-z0-9_-]+|app-initial~app-main~remote-conversation-page~new-thread-panel-page~appgen-library-page~hot~[A-Za-z0-9_-]+)\.js$/;
+
 const descriptors = [
   {
     id: "model-picker-visibility",
     phase: "webview-asset",
     order: 19_000,
     ciPolicy: "required-upstream",
-    pattern: /^model-list-filter-.*\.js$/,
+    pattern: MODEL_PICKER_ASSET_PATTERN,
+    assetMarker: "amazonBedrock",
     missingDescription: "model picker model query bundle",
     apply: applyCustomModelPickerVisibilityPatch,
   },
@@ -901,7 +997,8 @@ const descriptors = [
     phase: "webview-asset",
     order: 19_010,
     ciPolicy: "required-upstream",
-    pattern: /^model-queries-.*\.js$/,
+    pattern: MODEL_QUERY_ASSET_PATTERN,
+    assetMarker: "`list-models-for-host`",
     missingDescription: "model query bundle",
     apply: applyCustomModelListMergePatch,
   },
@@ -910,7 +1007,8 @@ const descriptors = [
     phase: "webview-asset",
     order: 19_020,
     ciPolicy: "required-upstream",
-    pattern: /^thread-context-inputs-.*\.js$/,
+    pattern: ROUTING_ASSET_PATTERN,
+    assetMarker: "`get-copilot-api-proxy-info`",
     missingDescription: "app-server manager signals bundle",
     apply: applyCustomModelRoutingPatch,
   },
@@ -919,7 +1017,8 @@ const descriptors = [
     phase: "webview-asset",
     order: 19_021,
     ciPolicy: "required-upstream",
-    pattern: /^thread-context-inputs-.*\.js$/,
+    pattern: ROUTING_ASSET_PATTERN,
+    assetMarker: "updateThreadSettingsForNextTurn",
     missingDescription: "app-server manager signals bundle",
     apply: applyCustomModelThreadSettingsRoutingPatch,
   },
@@ -928,7 +1027,8 @@ const descriptors = [
     phase: "webview-asset",
     order: 19_022,
     ciPolicy: "required-upstream",
-    pattern: /^thread-context-inputs-.*\.js$/,
+    pattern: ROUTING_ASSET_PATTERN,
+    assetMarker: "`turn/start`",
     missingDescription: "app-server manager signals bundle",
     apply: applyCustomModelTurnStartRoutingPatch,
   },
@@ -937,7 +1037,8 @@ const descriptors = [
     phase: "webview-asset",
     order: 19_023,
     ciPolicy: "required-upstream",
-    pattern: /^thread-context-inputs-.*\.js$/,
+    pattern: ROUTING_ASSET_PATTERN,
+    assetMarker: "`thread/fork`",
     missingDescription: "app-server manager signals bundle",
     apply: applyCustomModelForkRoutingPatch,
   },
@@ -946,7 +1047,8 @@ const descriptors = [
     phase: "webview-asset",
     order: 19_025,
     ciPolicy: "optional",
-    pattern: /^thread-context-inputs-.*\.js$/,
+    pattern: ROUTING_ASSET_PATTERN,
+    assetMarker: "skipDynamicTools",
     missingDescription: "app-server manager signals bundle",
     apply: applyCustomModelResumeDynamicToolsPatch,
   },
@@ -955,7 +1057,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 19_026,
     ciPolicy: "optional",
-    pattern: /^thread-context-inputs-.*\.js$/,
+    pattern: ROUTING_ASSET_PATTERN,
     missingDescription: "app-server manager signals bundle",
     apply: applyCustomModelResumeDynamicToolsPayloadPatch,
   },
@@ -964,7 +1066,8 @@ const descriptors = [
     phase: "webview-asset",
     order: 19_030,
     ciPolicy: "required-upstream",
-    pattern: /^thread-context-inputs-.*\.js$/,
+    pattern: ROUTING_ASSET_PATTERN,
+    assetMarker: "listRecentThreads",
     missingDescription: "app-server manager signals bundle",
     apply: applyCustomModelRecentThreadsPatch,
   },
@@ -973,7 +1076,8 @@ const descriptors = [
     phase: "webview-asset",
     order: 19_040,
     ciPolicy: "required-upstream",
-    pattern: /^model-and-reasoning-dropdown-[A-Za-z0-9_-]+\.js$/,
+    pattern: MODEL_DROPDOWN_ASSET_PATTERN,
+    assetMarker: "modelOption:",
     missingDescription: "composer model picker bundle",
     apply: applyCustomModelTooltipPatch,
   },
@@ -982,7 +1086,11 @@ const descriptors = [
     phase: "webview-asset",
     order: 19_041,
     ciPolicy: "required-upstream",
-    pattern: /^model-and-reasoning-dropdown-[A-Za-z0-9_-]+\.js$/,
+    pattern: MODEL_DROPDOWN_ASSET_PATTERN,
+    assetMarker: (source) =>
+      source.includes("composer.intelligenceDropdown.model.title") ||
+      source.includes(MODEL_PROVIDER_GROUP_NEEDLE) ||
+      source.includes(MODEL_PROVIDER_GROUP_CURRENT_NEEDLE),
     missingDescription: "composer model picker bundle",
     apply: applyCustomModelProviderGroupPatch,
   },
@@ -991,7 +1099,8 @@ const descriptors = [
     phase: "webview-asset",
     order: 19_045,
     ciPolicy: "required-upstream",
-    pattern: /^composer-[A-Za-z0-9_-]{8}\.js$/,
+    pattern: COMPOSER_ASSET_PATTERN,
+    assetMarker: "supportsFileAttachments",
     missingDescription: "composer bundle",
     apply: applyCustomModelComposerAttachmentPropPatch,
   },
@@ -1000,7 +1109,8 @@ const descriptors = [
     phase: "webview-asset",
     order: 19_046,
     ciPolicy: "required-upstream",
-    pattern: /^composer-[A-Za-z0-9_-]{8}\.js$/,
+    pattern: COMPOSER_ASSET_PATTERN,
+    assetMarker: "supportsFileAttachments",
     missingDescription: "composer attachment menu bundle",
     apply: applyCustomModelAttachmentMenuPatch,
   },

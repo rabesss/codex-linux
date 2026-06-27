@@ -138,6 +138,10 @@ function electron42CorePatchedBrowserClientFixture() {
   return String.raw`var Rd=z7(W7(),H7()==="win32"?"AppData\\Local\\Google\\Chrome\\User Data":"Library/Application Support/Google/Chrome"),codexLinuxChromeUserDataDirectories=()=>H7()==="linux"?[z7(W7(),".config","BraveSoftware","Brave-Browser"),z7(W7(),".config","google-chrome"),z7(W7(),".config","google-chrome-beta"),z7(W7(),".config","google-chrome-unstable"),z7(W7(),".config","chromium")]:[Rd];`;
 }
 
+function currentElectron42CorePatchedBrowserClientFixture() {
+  return String.raw`var Xd=dH(pH(),fH()==="win32"?"AppData\\Local\\Google\\Chrome\\User Data":"Library/Application Support/Google/Chrome"),codexLinuxChromeUserDataDirectories=()=>fH()==="linux"?[dH(pH(),".config","BraveSoftware","Brave-Browser"),dH(pH(),".config","google-chrome"),dH(pH(),".config","google-chrome-beta"),dH(pH(),".config","google-chrome-unstable"),dH(pH(),".config","chromium")]:[Xd];`;
+}
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: "utf8", ...options });
   assert.equal(
@@ -308,6 +312,27 @@ test("Brave Origin patcher upgrades the Electron 42 core-patched profile roots",
 
     const source = fs.readFileSync(path.join(scriptsDir, "browser-client.mjs"), "utf8");
     assert.match(source, /"\.config","BraveSoftware","Brave-Origin-Nightly"/);
+    assert.match(source, /"\.config","google-chrome-beta"/);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("Brave Origin patcher upgrades current Electron 42 core-patched profile roots", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codex-brave-origin-current-electron42-client-"));
+  try {
+    const chromePlugin = path.join(workspace, "chrome");
+    const scriptsDir = path.join(chromePlugin, "scripts");
+
+    writeFakeChromePlugin(chromePlugin);
+    fs.writeFileSync(path.join(scriptsDir, "browser-client.mjs"), currentElectron42CorePatchedBrowserClientFixture());
+
+    run("node", [path.join(repoRoot, "scripts", "lib", "patch-chrome-plugin.js"), chromePlugin]);
+    run("node", [path.join(repoRoot, "linux-features", FEATURE_ID, "patch-chrome-plugin.js"), chromePlugin]);
+
+    const source = fs.readFileSync(path.join(scriptsDir, "browser-client.mjs"), "utf8");
+    assert.match(source, /"\.config","BraveSoftware","Brave-Origin-Nightly"/);
+    assert.match(source, /"\.config","BraveSoftware","Brave-Browser"/);
     assert.match(source, /"\.config","google-chrome-beta"/);
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });

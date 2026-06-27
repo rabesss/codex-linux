@@ -3670,6 +3670,17 @@ JS
     assert_contains "$browser_client" 'async(e,t,r=ld)'
     assert_contains "$browser_client" "instanceId:await ZA(o.id,e,r)"
     assert_contains "$browser_client" "codexLinuxRankBrowserBackends"
+
+    cat > "$browser_client" <<'JS'
+import{readFile as wH}from"fs/promises";import{resolve as xH}from"path";import{resolve as dH}from"path";import{homedir as pH,platform as fH}from"os";var Xd=dH(pH(),fH()==="win32"?"AppData\\Local\\Google\\Chrome\\User Data":"Library/Application Support/Google/Chrome");import{ClassicLevel as mH}from"./node_modules/classic-level.mjs";import{resolve as ib}from"path";import{tmpdir as hH}from"os";import{cp as gH,mkdtemp as bH,rm as Bk}from"fs/promises";import{existsSync as yH}from"fs";var Fk=async(t,e)=>{let r=ib(Xd,t,"Local Extension Settings",e);if(!yH(r))return null;let n=await bH(ib(_H(),"codex"));await gH(r,n,{recursive:!0}),await Bk(ib(n,"LOCK"));let o=new mH(n,{createIfMissing:!1,keyEncoding:"utf8",valueEncoding:"utf8"});try{await o.open();let i=await o.get("extensionInstanceId");if(!i)return null;let s=JSON.parse(i);return typeof s!="string"?null:s}finally{await o.close(),await Bk(n,{force:!0,recursive:!0})}},_H=()=>"nodeRepl"in globalThis&&globalThis.nodeRepl?globalThis.nodeRepl.tmpDir:hH();var Lk=async t=>{if(t.type!=="extension"||!t.metadata?.extensionInstanceId||!t.metadata.extensionId)return t;let e=await SH(t.metadata.extensionId,t.metadata.extensionInstanceId);return e?{...t,metadata:{...t.metadata,profileName:e.name,profileIsLastUsed:e.isLastUsed.toString(),profileOrdering:e.orderingIndex.toString()}}:t},SH=async(t,e)=>(await vH(t)).find(o=>o.instanceId===e)||null,vH=async t=>{let e=await EH();return await Promise.all(e.map(async r=>({...r,instanceId:await Fk(r.id,t).catch(n=>(ue(n),null))})))},EH=async()=>{let t=xH(Xd,"Local State"),e=JSON.parse(await wH(t,"utf8"));return e.profile.profiles_order.map((r,n)=>{let o=e.profile.info_cache[r];return o?{id:r,name:o.name,isLastUsed:e.profile.last_used===r,orderingIndex:n,avatarUrl:o.avatar_icon}:null}).filter(r=>!!r)};var TH=5e3,ab=cE(CH.platform()),IH=async(t,{codexSessionId:e})=>{let r=Wt(eE),n=t.filter(i=>i.info.type==="iab"),o=AH(n,e,r);return await Promise.all(n.filter(i=>!o.includes(i)).map(async({api:i})=>i.close())),[...t.filter(i=>i.info.type!=="iab"),...o]},AH=(t,e,r)=>e==null?[]:t.filter(n=>n.info.metadata?.codexSessionId===e&&(r==null||n.info.metadata.codexAppBuildFlavor===r)),$k=async(t,e=[])=>[];
+JS
+    node "$REPO_DIR/scripts/lib/patch-chrome-plugin.js" "$chrome_dir" >/dev/null 2>&1
+    assert_contains "$browser_client" "codexLinuxChromeUserDataDirectories"
+    assert_contains "$browser_client" '"BraveSoftware","Brave-Browser"'
+    assert_contains "$browser_client" '"google-chrome-beta"'
+    assert_contains "$browser_client" 'async(t,e,r=Xd)'
+    assert_contains "$browser_client" "instanceId:await Fk(o.id,t,r)"
+    assert_contains "$browser_client" "codexLinuxRankBrowserBackends"
 }
 
 test_chrome_marketplace_fallback_synthesis() {

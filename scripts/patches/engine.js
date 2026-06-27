@@ -232,7 +232,13 @@ function applyWebviewAssetPatchDescriptors(extractedDir, descriptors, context, r
     const missingWarning = descriptor.missingWarning ??
       defaultWebviewMissingWarning(extractedDir, descriptor);
     const { value: result, warnings } = captureWarnings(() =>
-      patchAssetFiles(extractedDir, pattern, (source) => descriptor.apply(source, context), missingWarning),
+      patchAssetFiles(
+        extractedDir,
+        pattern,
+        (source) => descriptor.apply(source, context),
+        missingWarning,
+        { assetMarker: descriptor.assetMarker },
+      ),
     );
     recordAssetDescriptorPatch(report, descriptor, result, warnings, context);
   }

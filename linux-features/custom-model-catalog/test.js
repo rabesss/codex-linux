@@ -1633,7 +1633,7 @@ test("start conversation routing patch augments app-server conversation params",
   const patched = applyPatchTwice(applyCustomModelRoutingPatch, source);
 
   assert.match(patched, /function codexLinuxCustomModelApplyRouting/);
-  assert.match(patched, new RegExp(ROUTING_PATCH_VARIANTS[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(patched, /if\(c=codexLinuxCustomModelApplyRouting\(c,e\),c=O\(c,a\),/);
 });
 
 test("start conversation routing patch supports the current upstream bundle shape", () => {
