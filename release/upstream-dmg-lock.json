@@ -1,17 +1,17 @@
 {
   "schema_version": 1,
   "approved": {
-    "upstream_app_version": "26.616.71553",
+    "upstream_app_version": "26.623.42026",
     "dmg_url": "https://persistent.oaistatic.com/codex-app-prod/Codex.dmg",
-    "sha256": "efedc6c8ffa8f9479ddded3fed40c5cad261c779b798fdd161847f48141985c2",
-    "size": 525051984,
-    "etag": null,
-    "last_modified": null,
-    "approved_at": "2026-06-25T00:00:00Z",
+    "sha256": "80f026121b623d3b5f317239aa202605d90c0fe0e459ec27c859ba236923cdbb",
+    "size": 529667527,
+    "etag": "0x8DED40B19F1DC95",
+    "last_modified": "Sat, 27 Jun 2026 05:15:27 GMT",
+    "approved_at": "2026-06-27T07:51:30Z",
     "approved_by": "manual",
-    "wrapper_min_commit": "63a737715d8898be665533d80a43390438ab611d",
-    "patch_report": null,
-    "notes": "Seeded from the validated installed Codex Desktop Linux package record."
+    "wrapper_min_commit": "f00de21d325512232ee3c0d26db22b77daf6ac3a",
+    "patch_report": "patch-report.json",
+    "notes": "Passed local upstream-build validation and workstation rebuild on 2026-06-27."
   },
   "candidate": null
 }

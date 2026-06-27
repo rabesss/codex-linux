@@ -31,17 +31,17 @@ CI checks this file on every push and pull request. Scheduled/manual workflows o
 
 | Field | Value |
 | --- | --- |
-| Upstream app version | `26.616.71553` |
+| Upstream app version | `26.623.42026` |
 | DMG URL | `https://persistent.oaistatic.com/codex-app-prod/Codex.dmg` |
-| SHA-256 | `efedc6c8ffa8f9479ddded3fed40c5cad261c779b798fdd161847f48141985c2` |
-| Size | `525051984` bytes |
-| ETag | `n/a` |
-| Last-Modified | `n/a` |
-| Approved at | `2026-06-25T00:00:00Z` |
+| SHA-256 | `80f026121b623d3b5f317239aa202605d90c0fe0e459ec27c859ba236923cdbb` |
+| Size | `529667527` bytes |
+| ETag | `0x8DED40B19F1DC95` |
+| Last-Modified | `Sat, 27 Jun 2026 05:15:27 GMT` |
+| Approved at | `2026-06-27T07:51:30Z` |
 | Approved by | `manual` |
-| Minimum wrapper commit | `63a737715d8898be665533d80a43390438ab611d` |
-| Patch report | `n/a` |
-| Notes | Seeded from the validated installed Codex Desktop Linux package record. |
+| Minimum wrapper commit | `f00de21d325512232ee3c0d26db22b77daf6ac3a` |
+| Patch report | `patch-report.json` |
+| Notes | Passed local upstream-build validation and workstation rebuild on 2026-06-27. |
 
 ## Candidate State
 
