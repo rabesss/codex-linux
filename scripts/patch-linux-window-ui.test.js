@@ -4260,12 +4260,17 @@ test("patches all Browser Use node_repl approval configs in one pass", () => {
   const source = [
     "startup_timeout_sec:120,tools:{js:{approval_mode:`approve`}},env:{[dt]:l}",
     "startup_timeout_sec:120,env:{[ft]:i.nodePath}",
+    "{[`mcp_servers.${uy}`]:{args:[],command:a,env:p,startup_timeout_sec:120}}",
   ].join("");
 
   const patched = applyBrowserUseNodeReplApprovalPatch(source);
 
-  assert.equal((patched.match(/approval_mode:`approve`/g) || []).length, 2);
+  assert.equal((patched.match(/approval_mode:`approve`/g) || []).length, 3);
   assert.doesNotMatch(patched, /startup_timeout_sec:120,env:\{/);
+  assert.match(
+    patched,
+    /env:p,startup_timeout_sec:120,tools:\{js:\{approval_mode:`approve`\}\}/,
+  );
 });
 
 test("auto-approves the current Browser Use node_repl runtime config builder", () => {
@@ -4331,6 +4336,20 @@ test("trusts Linux patched bundled Browser Use clients by hashing staged files",
   } finally {
     fs.rmSync(resourcesRoot, { recursive: true, force: true });
   }
+});
+
+test("trusts Linux patched Browser Use clients in current thread config builder", () => {
+  const source =
+    '"use strict";let o=require(`node:fs`),i=require(`node:path`),s=require(`node:crypto`),it=[`upstream-hash`];async function pr({trustedBrowserClientSha256s:g=it}){let _=true,T=_?g:[];return T}';
+
+  const patched = applyPatchTwice(applyBrowserUseNodeReplApprovalPatch, source);
+
+  assert.match(patched, /^"use strict";function codexLinuxTrustedBrowserClientSha256s/);
+  assert.match(
+    patched,
+    /trustedBrowserClientSha256s:g=it\}\)\{g=codexLinuxTrustedBrowserClientSha256s\(g\);let _=true/,
+  );
+  assert.equal((patched.match(/function codexLinuxTrustedBrowserClientSha256s/g) || []).length, 1);
 });
 
 test("keeps removed IAB visible patch export as a no-op", () => {

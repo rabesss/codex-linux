@@ -1038,9 +1038,39 @@ function applyBrowserUseNodeReplApprovalPatch(currentSource) {
   const runtimeFactoryMethods = String.raw`Dn|Pn|Fa|La|Ha|\$a`;
   let patchedSource = currentSource;
   let patchedTrustedHashes = false;
+  const ensureTrustedHashHelper = () => {
+    if (patchedSource.includes("function codexLinuxTrustedBrowserClientSha256s(")) {
+      return true;
+    }
+    const fsVar = requireName(patchedSource, "node:fs");
+    const pathVar = requireName(patchedSource, "node:path");
+    const cryptoVar = requireName(patchedSource, "node:crypto");
+    if (fsVar == null || pathVar == null || cryptoVar == null) {
+      return false;
+    }
+    const helper =
+      `function codexLinuxTrustedBrowserClientSha256s(__codexHashes,__codexResourcesPath=process.resourcesPath){if(process.platform!==\`linux\`)return __codexHashes;let __codexTrustedHashes=Array.isArray(__codexHashes)?[...__codexHashes]:[],__codexBasePath=__codexResourcesPath??"";if(__codexBasePath.length===0)return Array.from(new Set(__codexTrustedHashes));for(let __codexPluginName of[\`browser\`,\`chrome\`])try{let __codexBrowserClientPath=(0,${pathVar}.join)(__codexBasePath,\`plugins\`,\`openai-bundled\`,\`plugins\`,__codexPluginName,\`scripts\`,\`browser-client.mjs\`);(0,${fsVar}.existsSync)(__codexBrowserClientPath)&&__codexTrustedHashes.push((0,${cryptoVar}.createHash)(\`sha256\`).update((0,${fsVar}.readFileSync)(__codexBrowserClientPath)).digest(\`hex\`))}catch{}return Array.from(new Set(__codexTrustedHashes))}`;
+    const strictDirective = '"use strict";';
+    const helperInsertionIndex = patchedSource.startsWith(strictDirective)
+      ? strictDirective.length
+      : 0;
+    patchedSource =
+      patchedSource.slice(0, helperInsertionIndex) +
+      helper +
+      patchedSource.slice(helperInsertionIndex);
+    return true;
+  };
+
   if (patchedSource.includes(needle)) {
     patchedSource = patchedSource.split(needle).join(approvalPatch);
   }
+
+  const envBeforeStartupConfigRegex =
+    /(\{\[`mcp_servers\.\$\{[A-Za-z_$][\w$]*\}`\]:\{args:\[\],command:[^,{}]+,env:)([^,{}]+)(,startup_timeout_sec:120)(?!,tools:\{js:\{approval_mode:`approve`\}\})/g;
+  patchedSource = patchedSource.replace(
+    envBeforeStartupConfigRegex,
+    "$1$2$3,tools:{js:{approval_mode:`approve`}}",
+  );
 
   const runtimeFactoryTrustedHashesRegex =
     new RegExp(String.raw`([A-Za-z_$][\w$]*)\.(${runtimeFactoryMethods})\(\{([^{}]*?trustedBrowserClientSha256s:)(?!codexLinuxTrustedBrowserClientSha256s\()([A-Za-z_$][\w$]*)(,[^{}]*?\})\)`, "g");
@@ -1058,10 +1088,29 @@ function applyBrowserUseNodeReplApprovalPatch(currentSource) {
     );
   }
 
+  const currentMainTrustedHashesParamRegex =
+    /trustedBrowserClientSha256s:([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\}\)\{let /g;
+  patchedSource = patchedSource.replace(
+    currentMainTrustedHashesParamRegex,
+    (match, trustedHashesVar) => {
+      if (!ensureTrustedHashHelper()) {
+        return match;
+      }
+      patchedTrustedHashes = true;
+      return match.replace("{let ", `{${trustedHashesVar}=codexLinuxTrustedBrowserClientSha256s(${trustedHashesVar});let `);
+    },
+  );
+
   const currentRuntimeConfigRegex =
     new RegExp(String.raw`([A-Za-z_$][\w$]*)\.(${runtimeFactoryMethods})\(\{([^{}]*?)nodeReplPath:([^,{}]+)(,)(?!tools:\{js:\{approval_mode:\`approve\`\}\})`, "g");
+  const currentNodeReplMcpAlreadyApprovedPattern =
+    String.raw`\{\[\`mcp_servers\.\$\{[A-Za-z_$][\w$]*\}\`\]:\{args:\[\],command:[^,{}]+,env:[^,{}]+,startup_timeout_sec:120,tools:\{js:\{approval_mode:\`approve\`\}\}`;
   const currentRuntimeConfigAlreadyApprovedRegex =
-    new RegExp(String.raw`[A-Za-z_$][\w$]*\.(?:${runtimeFactoryMethods})\(\{[^{}]*?nodeReplPath:[^,{}]+,tools:\{js:\{approval_mode:\`approve\`\}\},`);
+    new RegExp(
+      String.raw`[A-Za-z_$][\w$]*\.(?:${runtimeFactoryMethods})\(\{[^{}]*?nodeReplPath:[^,{}]+,tools:\{js:\{approval_mode:\`approve\`\}\},` +
+        "|" +
+        currentNodeReplMcpAlreadyApprovedPattern,
+    );
   let patchedAnyCurrentRuntimeConfig = false;
   patchedSource = patchedSource.replace(
     currentRuntimeConfigRegex,
@@ -1088,10 +1137,7 @@ function applyBrowserUseNodeReplApprovalPatch(currentSource) {
     patchedTrustedHashes &&
     !patchedSource.includes("function codexLinuxTrustedBrowserClientSha256s(")
   ) {
-    const fsVar = requireName(patchedSource, "node:fs");
-    const pathVar = requireName(patchedSource, "node:path");
-    const cryptoVar = requireName(patchedSource, "node:crypto");
-    if (fsVar == null || pathVar == null || cryptoVar == null) {
+    if (!ensureTrustedHashHelper()) {
       console.warn(
         "WARN: Could not find fs/path/crypto aliases — skipping Linux Browser Use trusted hash patch",
       );
@@ -1104,17 +1150,6 @@ function applyBrowserUseNodeReplApprovalPatch(currentSource) {
         "trustedBrowserClientSha256s:$1",
       );
       patchedTrustedHashes = false;
-    } else {
-      const helper =
-        `function codexLinuxTrustedBrowserClientSha256s(__codexHashes,__codexResourcesPath=process.resourcesPath){if(process.platform!==\`linux\`)return __codexHashes;let __codexTrustedHashes=Array.isArray(__codexHashes)?[...__codexHashes]:[],__codexBasePath=__codexResourcesPath??"";if(__codexBasePath.length===0)return Array.from(new Set(__codexTrustedHashes));for(let __codexPluginName of[\`browser\`,\`chrome\`])try{let __codexBrowserClientPath=(0,${pathVar}.join)(__codexBasePath,\`plugins\`,\`openai-bundled\`,\`plugins\`,__codexPluginName,\`scripts\`,\`browser-client.mjs\`);(0,${fsVar}.existsSync)(__codexBrowserClientPath)&&__codexTrustedHashes.push((0,${cryptoVar}.createHash)(\`sha256\`).update((0,${fsVar}.readFileSync)(__codexBrowserClientPath)).digest(\`hex\`))}catch{}return Array.from(new Set(__codexTrustedHashes))}`;
-      const strictDirective = '"use strict";';
-      const helperInsertionIndex = patchedSource.startsWith(strictDirective)
-        ? strictDirective.length
-        : 0;
-      patchedSource =
-        patchedSource.slice(0, helperInsertionIndex) +
-        helper +
-        patchedSource.slice(helperInsertionIndex);
     }
   }
 
