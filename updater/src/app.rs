@@ -858,9 +858,7 @@ async fn run_check_cycle(
                 return Ok(());
             }
 
-            if upstream_lock::approved_dmg_already_installed(config, state, approved)
-                && !retrying_failed_update
-            {
+            if upstream_lock::approved_dmg_already_installed(config, state, approved) {
                 state.dmg_sha256 = Some(approved.sha256.clone());
                 set_idle_without_upstream_candidate(state, paths)?;
                 info!(
@@ -2125,11 +2123,15 @@ mod tests {
         )?;
         let mut state = PersistedState::new(false);
         state.installed_version = "2026.06.23.154809+efedc6c8-1".to_string();
+        state.status = UpdateStatus::Failed;
+        state.candidate_version = Some("2026.06.25.000000+efedc6c8".to_string());
+        state.error_message = Some("previous failed rebuild".to_string());
 
         run_check_cycle(&config, &mut state, &paths).await?;
 
         assert_eq!(state.status, UpdateStatus::Idle);
         assert_eq!(state.candidate_version, None);
+        assert_eq!(state.error_message, None);
         assert_eq!(state.dmg_sha256.as_deref(), Some(approved_sha));
         assert_eq!(state.unapproved_upstream_candidate, None);
         assert_eq!(state.artifact_paths.dmg_path, None);
