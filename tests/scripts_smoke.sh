@@ -955,11 +955,14 @@ printf '%s\n' "${MAKEPKG_CONF:-}" > "$CAPTURE_DIR/makepkg-conf-path"
 if [ -n "${MAKEPKG_CONF:-}" ]; then
     cp "$MAKEPKG_CONF" "$CAPTURE_DIR/makepkg.conf"
     bash -c 'set -euo pipefail; . "$1"; printf "%s\n" "$MAKEFLAGS"' _ "$MAKEPKG_CONF" > "$CAPTURE_DIR/makepkg-evaluated-makeflags"
+    # shellcheck disable=SC1090
+    . "$MAKEPKG_CONF"
 fi
 pkgname="$(sed -n 's/^pkgname=//p' PKGBUILD)"
 pkgver="$(sed -n 's/^pkgver=//p' PKGBUILD)"
 pkgrel="$(sed -n 's/^pkgrel=//p' PKGBUILD)"
 arch="$(sed -n "s/^arch=('\([^']*\)').*/\1/p" PKGBUILD)"
+: "${PKGDEST:?}"
 mkdir -p "$PKGDEST"
 touch "$PKGDEST/${pkgname}-${pkgver}-${pkgrel}-${arch}.pkg.tar.zst"
 SCRIPT
@@ -991,6 +994,7 @@ SCRIPT
     assert_file_exists "$capture_dir/PKGBUILD"
     assert_file_exists "$capture_dir/codex-desktop.install"
     assert_file_exists "$capture_dir/makepkg.conf"
+    assert_contains "$capture_dir/makepkg.conf" "PKGDEST=$dist_dir"
     assert_contains "$capture_dir/makepkg.conf" "MAKEFLAGS=\"\${MAKEFLAGS:+\$MAKEFLAGS }-j5\""
     [ "$(cat "$capture_dir/makepkg-evaluated-makeflags")" = "-j12 -j5" ] \
         || fail "Expected generated makepkg config to make MAX_BUILD_THREADS win over existing MAKEFLAGS"
