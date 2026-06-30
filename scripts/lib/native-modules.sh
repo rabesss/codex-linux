@@ -5,8 +5,7 @@
 # shellcheck shell=bash
 
 # ---- Build native modules in a clean directory ----
-ELECTRON_REBUILD_PACKAGE="@electron/rebuild@4.0.4"
-ELECTRON_REBUILD_NODE_ABI_PACKAGE="node-abi@^4.31.0"
+NATIVE_NODE_GYP_PACKAGE="node-gyp@^12.4.0"
 
 version_lt() {
     [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n 1)" = "$1" ]
@@ -170,11 +169,49 @@ CPP
     info "Applied GCC 16+ nullptr_t compatibility workaround"
 }
 
+assert_native_module_build_output() {
+    local output_path="$1"
+    local label="$2"
+
+    if [ ! -s "$output_path" ]; then
+        error "Native module build did not produce $label at $output_path"
+    fi
+}
+
+rebuild_native_module_with_node_gyp() {
+    local build_dir="$1"
+    local module_dir="$2"
+    local label="$3"
+    local max_build_threads="$4"
+    local node_gyp_cli="$build_dir/node_modules/node-gyp/bin/node-gyp.js"
+    local -a node_gyp_args=(
+        rebuild
+        --release
+        "--target=$ELECTRON_VERSION"
+        "--dist-url=$ELECTRON_HEADERS_URL"
+        --verbose
+    )
+
+    [ -f "$node_gyp_cli" ] || error "node-gyp CLI not found in native build toolchain"
+
+    if [ "$max_build_threads" != "0" ]; then
+        node_gyp_args+=(--jobs "$max_build_threads")
+    fi
+
+    info "Building $label for Electron v$ELECTRON_VERSION"
+    (
+        cd "$module_dir"
+        if [ "$max_build_threads" != "0" ]; then
+            MAKEFLAGS="-j$max_build_threads"
+            export MAKEFLAGS
+        fi
+        node "$node_gyp_cli" "${node_gyp_args[@]}" 2>&1 >&2
+    )
+}
+
 build_native_modules() {
     local app_extracted="$1"
     local max_build_threads="${MAX_BUILD_THREADS:-0}"
-    local -a electron_rebuild_mode_args=()
-    local -a native_build_env=()
 
     case "$max_build_threads" in
         ""|*[!0-9]*)
@@ -182,18 +219,7 @@ build_native_modules() {
             ;;
     esac
 
-    if [ "$max_build_threads" != "0" ]; then
-        electron_rebuild_mode_args+=(--sequential)
-    fi
-
-    if [ "$max_build_threads" != "0" ]; then
-        native_build_env+=(
-            "npm_config_jobs=$max_build_threads"
-            "NPM_CONFIG_JOBS=$max_build_threads"
-            "MAKEFLAGS=-j$max_build_threads"
-        )
-        info "Max build threads: $max_build_threads"
-    fi
+    [ "$max_build_threads" = "0" ] || info "Max build threads: $max_build_threads"
 
     # Read versions from extracted app
     local bs3_ver bs3_build_ver npty_ver
@@ -222,24 +248,17 @@ build_native_modules() {
     echo '{"private":true}' > package.json
 
     info "Installing fresh sources from npm..."
-    npm install \
-        "electron@$ELECTRON_VERSION" \
-        "$ELECTRON_REBUILD_PACKAGE" \
-        "$ELECTRON_REBUILD_NODE_ABI_PACKAGE" \
-        --save-dev \
-        --ignore-scripts 2>&1 >&2
+    npm install "$NATIVE_NODE_GYP_PACKAGE" --save-dev --ignore-scripts 2>&1 >&2
     npm install "better-sqlite3@$bs3_build_ver" "node-pty@$npty_ver" --ignore-scripts 2>&1 >&2
     patch_better_sqlite3_for_v8_external_pointer_api "$build_dir/node_modules/better-sqlite3"
 
     info "Compiling for Electron v$ELECTRON_VERSION (this takes ~1 min)..."
     info "Using Electron headers: $ELECTRON_HEADERS_URL"
-    [ -f "$build_dir/node_modules/@electron/rebuild/lib/cli.js" ] || error "electron-rebuild CLI not found in native build toolchain"
     apply_v8_nullptr_t_workaround_if_needed "$build_dir"
-    env \
-        npm_config_disturl="$ELECTRON_HEADERS_URL" \
-        NPM_CONFIG_DISTURL="$ELECTRON_HEADERS_URL" \
-        "${native_build_env[@]}" \
-        node "$build_dir/node_modules/@electron/rebuild/lib/cli.js" -v "$ELECTRON_VERSION" --force --dist-url "$ELECTRON_HEADERS_URL" "${electron_rebuild_mode_args[@]}" 2>&1 >&2
+    rebuild_native_module_with_node_gyp "$build_dir" "$build_dir/node_modules/better-sqlite3" "better-sqlite3" "$max_build_threads"
+    rebuild_native_module_with_node_gyp "$build_dir" "$build_dir/node_modules/node-pty" "node-pty" "$max_build_threads"
+    assert_native_module_build_output "$build_dir/node_modules/better-sqlite3/build/Release/better_sqlite3.node" "better-sqlite3"
+    assert_native_module_build_output "$build_dir/node_modules/node-pty/build/Release/pty.node" "node-pty"
 
     info "Native modules built successfully"
 
@@ -248,6 +267,8 @@ build_native_modules() {
     rm -rf "$app_extracted/node_modules/node-pty"
     cp -r "$build_dir/node_modules/better-sqlite3" "$app_extracted/node_modules/"
     cp -r "$build_dir/node_modules/node-pty" "$app_extracted/node_modules/"
+    assert_native_module_build_output "$app_extracted/node_modules/better-sqlite3/build/Release/better_sqlite3.node" "better-sqlite3"
+    assert_native_module_build_output "$app_extracted/node_modules/node-pty/build/Release/pty.node" "node-pty"
     prune_native_module_build_artifacts "$app_extracted/node_modules/better-sqlite3"
     prune_native_module_build_artifacts "$app_extracted/node_modules/node-pty"
 }
@@ -279,6 +300,8 @@ install_native_modules_from_source() {
     cp -r "$source_better_sqlite3" "$app_extracted/node_modules/"
     cp -r "$source_node_pty" "$app_extracted/node_modules/"
     chmod -R u+w "$app_extracted/node_modules/better-sqlite3" "$app_extracted/node_modules/node-pty"
+    assert_native_module_build_output "$app_extracted/node_modules/better-sqlite3/build/Release/better_sqlite3.node" "better-sqlite3"
+    assert_native_module_build_output "$app_extracted/node_modules/node-pty/build/Release/pty.node" "node-pty"
     prune_native_module_build_artifacts "$app_extracted/node_modules/better-sqlite3"
     prune_native_module_build_artifacts "$app_extracted/node_modules/node-pty"
 }

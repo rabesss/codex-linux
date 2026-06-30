@@ -63,7 +63,7 @@ build metadata and policy files instead of assuming a live `.git` checkout.
 4. Enabled optional `linux-features/` descriptors add patches, resources,
    runtime hooks, and package hooks.
 5. Native Node modules such as `better-sqlite3` and `node-pty` are rebuilt for
-   Linux through `@electron/rebuild`.
+   Linux with Electron-targeted `node-gyp`.
 6. A matching Linux Electron runtime is downloaded.
 7. Bundled Linux integration and managed runtime resources are staged.
 8. The Linux launcher is generated into `codex-app/start.sh`.

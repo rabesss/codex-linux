@@ -66,7 +66,7 @@ Environment variables:
                       Override display name (default: Codex Desktop)
   CODEX_WEBVIEW_PORT  Override webview HTTP port (default: 5175, or 5176 for non-default app ids)
   ELECTRON_HEADERS_URL
-                      Override the Electron headers URL used by @electron/rebuild
+                      Override the Electron headers URL used by native node-gyp rebuilds
                       (default: https://artifacts.electronjs.org/headers/dist)
   ELECTRON_MIRROR     Override the Electron runtime download mirror root
                       (example: https://npmmirror.com/mirrors/electron/)

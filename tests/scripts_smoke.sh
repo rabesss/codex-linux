@@ -2414,8 +2414,8 @@ SCRIPT
     assert_contains "$output_log" "Applied GCC 16+ nullptr_t compatibility workaround"
 }
 
-test_native_module_rebuild_uses_local_electron_rebuild_toolchain() {
-    info "Checking native module rebuild uses local Electron rebuild toolchain"
+test_native_module_rebuild_uses_local_node_gyp_toolchain() {
+    info "Checking native module rebuild uses local node-gyp toolchain"
     local workspace="$TMP_DIR/native-module-rebuild-toolchain"
     local app_dir="$workspace/app-extracted"
     local fake_bin="$workspace/bin"
@@ -2434,18 +2434,27 @@ printf 'npm %s\n' "$*" >> "$NATIVE_TOOLCHAIN_LOG"
 args=" $* "
 
 case "$args" in
-    *" @electron/rebuild@4.0.4 "*)
-        mkdir -p node_modules/@electron/rebuild/lib
-        cat > node_modules/@electron/rebuild/lib/cli.js <<'REBUILD'
+    *" node-gyp@^12.4.0 "*)
+        mkdir -p node_modules/node-gyp/bin node_modules/.bin
+        cat > node_modules/node-gyp/bin/node-gyp.js <<'NODEGYP'
 #!/usr/bin/env node
 const fs = require("fs");
-fs.appendFileSync(process.env.NATIVE_TOOLCHAIN_LOG, `electron-rebuild ${process.argv.slice(2).join(" ")}\n`);
-fs.appendFileSync(process.env.NATIVE_TOOLCHAIN_LOG, `electron-rebuild-env jobs=${process.env.npm_config_jobs || ""} makeflags=${process.env.MAKEFLAGS || ""}\n`);
-fs.mkdirSync("node_modules/better-sqlite3/build/Release", { recursive: true });
-fs.mkdirSync("node_modules/node-pty/build/Release", { recursive: true });
-fs.closeSync(fs.openSync("node_modules/better-sqlite3/build/Release/better_sqlite3.node", "w"));
-fs.closeSync(fs.openSync("node_modules/node-pty/build/Release/pty.node", "w"));
-REBUILD
+const path = require("path");
+const moduleName = path.basename(process.cwd());
+fs.appendFileSync(process.env.NATIVE_TOOLCHAIN_LOG, `node-gyp ${moduleName} ${process.argv.slice(2).join(" ")}\n`);
+fs.appendFileSync(process.env.NATIVE_TOOLCHAIN_LOG, `node-gyp-env ${moduleName} makeflags=${process.env.MAKEFLAGS || ""}\n`);
+if (moduleName === "better-sqlite3") {
+  fs.mkdirSync("build/Release", { recursive: true });
+  fs.writeFileSync("build/Release/better_sqlite3.node", "native");
+} else if (moduleName === "node-pty") {
+  fs.mkdirSync("build/Release", { recursive: true });
+  fs.writeFileSync("build/Release/pty.node", "native");
+} else {
+  throw new Error(`unexpected node-gyp cwd: ${process.cwd()}`);
+}
+NODEGYP
+        chmod +x node_modules/node-gyp/bin/node-gyp.js
+        ln -sf ../node-gyp/bin/node-gyp.js node_modules/.bin/node-gyp
         ;;
 esac
 
@@ -2488,7 +2497,7 @@ SCRIPT
 
     cat > "$fake_bin/npx" <<'SCRIPT'
 #!/usr/bin/env bash
-echo "npx should not be used for electron-rebuild" >&2
+echo "npx should not be used for native module rebuilds" >&2
 exit 99
 SCRIPT
     chmod +x "$fake_bin/npx"
@@ -2514,10 +2523,11 @@ SCRIPT
         build_native_modules "$app_dir"
     ) > "$output_log" 2>&1
 
-    assert_contains "$toolchain_log" "@electron/rebuild@4.0.4"
-    assert_contains "$toolchain_log" "node-abi@^4.31.0"
-    assert_contains "$toolchain_log" "electron-rebuild -v 42.0.1 --force --dist-url https://example.invalid/electron --sequential"
-    assert_contains "$toolchain_log" "electron-rebuild-env jobs=4 makeflags=-j4"
+    assert_contains "$toolchain_log" "node-gyp@^12.4.0"
+    assert_contains "$toolchain_log" "node-gyp better-sqlite3 rebuild --release --target=42.0.1 --dist-url=https://example.invalid/electron --verbose --jobs 4"
+    assert_contains "$toolchain_log" "node-gyp node-pty rebuild --release --target=42.0.1 --dist-url=https://example.invalid/electron --verbose --jobs 4"
+    assert_contains "$toolchain_log" "node-gyp-env better-sqlite3 makeflags=-j4"
+    assert_contains "$toolchain_log" "node-gyp-env node-pty makeflags=-j4"
     assert_contains "$output_log" "Native modules built successfully"
     assert_file_exists "$app_dir/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
     assert_file_exists "$app_dir/node_modules/node-pty/build/Release/pty.node"
@@ -2541,9 +2551,9 @@ test_native_module_rebuild_accepts_prebuilt_source() {
 
     printf '%s\n' '{"version":"12.9.0"}' > "$source_dir/better-sqlite3/package.json"
     printf '%s\n' '{"version":"1.1.0"}' > "$source_dir/node-pty/package.json"
-    : > "$source_dir/better-sqlite3/build/Release/better_sqlite3.node"
+    printf '%s\n' native > "$source_dir/better-sqlite3/build/Release/better_sqlite3.node"
     : > "$source_dir/better-sqlite3/build/Release/junk.o"
-    : > "$source_dir/node-pty/build/Release/pty.node"
+    printf '%s\n' native > "$source_dir/node-pty/build/Release/pty.node"
     : > "$source_dir/node-pty/build/Release/junk.o"
 
     (
@@ -2565,6 +2575,114 @@ test_native_module_rebuild_accepts_prebuilt_source() {
     [ ! -f "$app_dir/node_modules/better-sqlite3/old.txt" ] || fail "Expected stale better-sqlite3 module to be replaced"
     [ ! -f "$app_dir/node_modules/better-sqlite3/build/Release/junk.o" ] || fail "Expected better-sqlite3 build junk to be pruned"
     [ ! -f "$app_dir/node_modules/node-pty/build/Release/junk.o" ] || fail "Expected node-pty build junk to be pruned"
+}
+
+test_repacked_asar_verifies_native_module_metadata() {
+    info "Checking repacked ASAR native module metadata verification"
+    local workspace="$TMP_DIR/repacked-asar-native-metadata"
+    local archive="$workspace/app.asar"
+    local unpacked_dir="$workspace/app.asar.unpacked"
+    local fake_bin="$workspace/bin"
+    local output_log="$workspace/output.log"
+
+    mkdir -p \
+        "$fake_bin" \
+        "$unpacked_dir/node_modules/better-sqlite3/build/Release" \
+        "$unpacked_dir/node_modules/node-pty/build/Release"
+    : > "$archive"
+    : > "$unpacked_dir/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+    : > "$unpacked_dir/node_modules/node-pty/build/Release/pty.node"
+
+    cat > "$fake_bin/npx" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$#" -ge 3 ] && [ "$1" = "--yes" ] && [ "$2" = "asar" ] && [ "$3" = "list" ]; then
+    printf '%s\n' "/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+    if [ "${ASAR_LIST_MODE:-ok}" != "missing-node-pty" ]; then
+        printf '%s\n' "/node_modules/node-pty/build/Release/pty.node"
+    fi
+    exit 0
+fi
+
+printf 'unexpected npx invocation: %s\n' "$*" >&2
+exit 98
+SCRIPT
+    chmod +x "$fake_bin/npx"
+
+    run_verify() {
+        (
+            PATH="$fake_bin:$PATH"
+            export PATH
+            info() { echo "[INFO] $*" >&2; }
+            error() { echo "[ERROR] $*" >&2; exit 1; }
+            # shellcheck disable=SC1091
+            source "$REPO_DIR/scripts/lib/asar-patch.sh"
+            verify_repacked_native_modules "$archive" "$unpacked_dir"
+        ) > "$output_log" 2>&1
+    }
+
+    run_verify
+    assert_contains "$output_log" "Verified native module ASAR unpack metadata"
+
+    rm -f "$unpacked_dir/node_modules/node-pty/build/Release/pty.node"
+    if run_verify; then
+        fail "Expected ASAR verifier to reject a missing unpacked native module"
+    fi
+    assert_contains "$output_log" "app.asar.unpacked is missing native module file node_modules/node-pty/build/Release/pty.node"
+    : > "$unpacked_dir/node_modules/node-pty/build/Release/pty.node"
+
+    if ASAR_LIST_MODE=missing-node-pty run_verify; then
+        fail "Expected ASAR verifier to reject missing native module metadata"
+    fi
+    assert_contains "$output_log" "app.asar is missing native module metadata for node_modules/node-pty/build/Release/pty.node"
+
+    assert_contains "$REPO_DIR/scripts/lib/asar-patch.sh" "npx --yes asar pack"
+    assert_contains "$REPO_DIR/scripts/lib/asar-patch.sh" 'verify_repacked_native_modules "$WORK_DIR/app.asar" "$WORK_DIR/app.asar.unpacked"'
+}
+
+test_install_app_replaces_stale_asar_sidecar() {
+    info "Checking app.asar install replaces stale unpacked sidecar"
+    local workspace="$TMP_DIR/install-app-sidecar"
+    local output_log="$workspace/output.log"
+
+    mkdir -p \
+        "$workspace/work/app.asar.unpacked/fresh" \
+        "$workspace/install/resources/app.asar.unpacked/stale"
+    printf '%s\n' fresh-asar > "$workspace/work/app.asar"
+    printf '%s\n' fresh-sidecar > "$workspace/work/app.asar.unpacked/fresh/native.node"
+    printf '%s\n' stale-sidecar > "$workspace/install/resources/app.asar.unpacked/stale/native.node"
+
+    (
+        WORK_DIR="$workspace/work"
+        INSTALL_DIR="$workspace/install"
+        info() { echo "[INFO] $*" >&2; }
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/webview-install.sh"
+        install_app
+    ) > "$output_log" 2>&1
+
+    assert_file_exists "$workspace/install/resources/app.asar"
+    assert_file_exists "$workspace/install/resources/app.asar.unpacked/fresh/native.node"
+    assert_file_not_exists "$workspace/install/resources/app.asar.unpacked/stale/native.node"
+    assert_contains "$output_log" "app.asar installed"
+
+    rm -rf "$workspace/work/app.asar.unpacked"
+    mkdir -p "$workspace/install/resources/app.asar.unpacked/stale"
+    printf '%s\n' stale-sidecar > "$workspace/install/resources/app.asar.unpacked/stale/native.node"
+    printf '%s\n' newer-asar > "$workspace/work/app.asar"
+
+    (
+        WORK_DIR="$workspace/work"
+        INSTALL_DIR="$workspace/install"
+        info() { echo "[INFO] $*" >&2; }
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/webview-install.sh"
+        install_app
+    ) > "$output_log" 2>&1
+
+    assert_file_exists "$workspace/install/resources/app.asar"
+    assert_file_not_exists "$workspace/install/resources/app.asar.unpacked/stale/native.node"
 }
 
 test_bundled_plugin_builders_accept_prebuilt_binaries() {
@@ -2722,10 +2840,12 @@ SCRIPT
     assert_contains "$REPO_DIR/launcher/start.sh.template" "codex-ipc/ipc-"
     assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" "better_sqlite3_build_version"
     assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" "patch_better_sqlite3_for_v8_external_pointer_api"
-    assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" "@electron/rebuild@4.0.4"
-    assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" "node-abi@^4.31.0"
-    assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" 'node_modules/@electron/rebuild/lib/cli.js'
-    assert_not_contains "$REPO_DIR/scripts/lib/native-modules.sh" "npx --yes @electron/rebuild"
+    assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" "node-gyp@^12.4.0"
+    assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" "rebuild_native_module_with_node_gyp"
+    assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" 'node_modules/node-gyp/bin/node-gyp.js'
+    assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" "assert_native_module_build_output"
+    assert_not_contains "$REPO_DIR/scripts/lib/native-modules.sh" "@electron/rebuild"
+    assert_not_contains "$REPO_DIR/scripts/lib/native-modules.sh" "node-abi"
     assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" "prune_native_module_build_artifacts"
     assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" 'find "$build_dir" -type f ! -name'
     assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" 'find "$module_dir" -type f -name'
@@ -5980,8 +6100,10 @@ main() {
     test_better_sqlite3_electron_42_source_patch
     test_v8_nullptr_workaround_skips_when_included_probe_succeeds
     test_v8_nullptr_workaround_wraps_when_included_probe_fails
-    test_native_module_rebuild_uses_local_electron_rebuild_toolchain
+    test_native_module_rebuild_uses_local_node_gyp_toolchain
     test_native_module_rebuild_accepts_prebuilt_source
+    test_repacked_asar_verifies_native_module_metadata
+    test_install_app_replaces_stale_asar_sidecar
     test_bundled_plugin_builders_accept_prebuilt_binaries
     test_browser_use_node_repl_fallback_runtime
     test_browser_use_file_url_policy_patch_behavior

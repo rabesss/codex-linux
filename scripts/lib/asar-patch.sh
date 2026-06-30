@@ -5,6 +5,35 @@
 # shellcheck shell=bash
 
 # ---- Extract and patch app.asar ----
+required_native_module_unpack_paths() {
+    printf '%s\n' \
+        "node_modules/better-sqlite3/build/Release/better_sqlite3.node" \
+        "node_modules/node-pty/build/Release/pty.node"
+}
+
+verify_repacked_native_modules() {
+    local archive_path="$1"
+    local unpacked_dir="$2"
+    local asar_listing
+    local native_path
+
+    [ -f "$archive_path" ] || error "Repacked app.asar was not created: $archive_path"
+    [ -d "$unpacked_dir" ] || error "Repacked app.asar.unpacked was not created: $unpacked_dir"
+
+    asar_listing="$(npx --yes asar list "$archive_path")" || error "Could not list repacked app.asar"
+    while IFS= read -r native_path; do
+        [ -n "$native_path" ] || continue
+        if ! grep -Fxq "/$native_path" <<<"$asar_listing"; then
+            error "Repacked app.asar is missing native module metadata for $native_path"
+        fi
+        if [ ! -f "$unpacked_dir/$native_path" ]; then
+            error "Repacked app.asar.unpacked is missing native module file $native_path"
+        fi
+    done < <(required_native_module_unpack_paths)
+
+    info "Verified native module ASAR unpack metadata"
+}
+
 patch_asar() {
     local app_dir="$1"
     local resources_dir="$app_dir/Contents/Resources"
@@ -39,7 +68,10 @@ patch_asar() {
     info "Repacking app.asar..."
     cd "$WORK_DIR"
     (cd app-extracted && find . -type f | LC_ALL=C sort | sed 's#^\./##') > "$WORK_DIR/app.asar.ordering"
-    npx asar pack app-extracted app.asar --ordering "$WORK_DIR/app.asar.ordering" --unpack "{*.node,*.so,*.dylib}" 2>/dev/null
+    rm -f "$WORK_DIR/app.asar"
+    rm -rf "$WORK_DIR/app.asar.unpacked"
+    npx --yes asar pack app-extracted app.asar --ordering "$WORK_DIR/app.asar.ordering" --unpack "{*.node,*.so,*.dylib}" 2>/dev/null
+    verify_repacked_native_modules "$WORK_DIR/app.asar" "$WORK_DIR/app.asar.unpacked"
 
     info "app.asar patched"
 }

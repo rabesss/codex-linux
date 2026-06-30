@@ -311,8 +311,9 @@ If runtime downloads from GitHub are slow or blocked:
 ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ make build-app
 ```
 
-`ELECTRON_HEADERS_URL` is passed to `@electron/rebuild --dist-url` and must
-provide both `node-v<version>-headers.tar.gz` and the matching `SHASUMS256.txt`.
+`ELECTRON_HEADERS_URL` is passed to `node-gyp --dist-url` for Electron-targeted
+native module rebuilds and must provide both `node-v<version>-headers.tar.gz`
+and the matching `SHASUMS256.txt`.
 
 ## Build Parallelism
 

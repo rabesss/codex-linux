@@ -28,6 +28,9 @@ extract_webview() {
 
 # ---- Install app.asar ----
 install_app() {
+    mkdir -p "$INSTALL_DIR/resources"
+    rm -f "$INSTALL_DIR/resources/app.asar"
+    rm -rf "$INSTALL_DIR/resources/app.asar.unpacked"
     cp "$WORK_DIR/app.asar" "$INSTALL_DIR/resources/"
     if [ -d "$WORK_DIR/app.asar.unpacked" ]; then
         cp -r "$WORK_DIR/app.asar.unpacked" "$INSTALL_DIR/resources/"
