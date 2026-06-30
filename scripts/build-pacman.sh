@@ -50,6 +50,7 @@ write_threaded_makepkg_config() {
 	local home_dir="${HOME:-}"
 	local xdg_config_home="${XDG_CONFIG_HOME:-}"
 	local user_makepkg_conf=""
+	local append_config_file
 
 	if [ -z "$xdg_config_home" ] && [ -n "$home_dir" ]; then
 		xdg_config_home="$home_dir/.config"
@@ -60,20 +61,31 @@ write_threaded_makepkg_config() {
 		user_makepkg_conf="$home_dir/.makepkg.conf"
 	fi
 
+	append_config_file() {
+		local source_path="$1"
+		[ -r "$source_path" ] || return 0
+		printf '\n# Begin %s\n' "$source_path"
+		cat "$source_path"
+		printf '\n# End %s\n' "$source_path"
+	}
+
 	{
 		if [ -n "${MAKEPKG_CONF:-}" ]; then
 			[ -r "$MAKEPKG_CONF" ] || error "MAKEPKG_CONF is not readable: $MAKEPKG_CONF"
-			printf '. %q\n' "$MAKEPKG_CONF"
+			append_config_file "$MAKEPKG_CONF"
 		else
-			[ -r /etc/makepkg.conf ] && printf '. %q\n' /etc/makepkg.conf
+			append_config_file /etc/makepkg.conf
 			local system_makepkg_conf
 			for system_makepkg_conf in /etc/makepkg.conf.d/*.conf; do
-				[ -r "$system_makepkg_conf" ] && printf '. %q\n' "$system_makepkg_conf"
+				append_config_file "$system_makepkg_conf"
 			done
-			[ -n "$user_makepkg_conf" ] && printf '. %q\n' "$user_makepkg_conf"
+			[ -n "$user_makepkg_conf" ] && append_config_file "$user_makepkg_conf"
 		fi
-		printf 'MAKEFLAGS="${MAKEFLAGS:+$MAKEFLAGS }-j%s"\n' "$MAX_BUILD_THREADS"
-		printf 'COMPRESSZST=(zstd -c -z -T%s -)\n' "$MAX_BUILD_THREADS"
+		printf 'PKGDEST=%q\n' "$DIST_DIR"
+		if [ "$MAX_BUILD_THREADS" != "0" ]; then
+			printf 'MAKEFLAGS="${MAKEFLAGS:+$MAKEFLAGS }-j%s"\n' "$MAX_BUILD_THREADS"
+			printf 'COMPRESSZST=(zstd -c -z -T%s -)\n' "$MAX_BUILD_THREADS"
+		fi
 	} >"$target"
 }
 
@@ -107,15 +119,17 @@ main() {
 	local build_root
 	build_root="$(mktemp -d)"
 	# shellcheck disable=SC2064
-	trap "rm -rf '$build_root'" EXIT
+	if [ "${KEEP_PACMAN_BUILD_ROOT:-0}" = "1" ]; then
+		trap "printf '%s\n' 'Preserved pacman build root: $build_root'" EXIT
+	else
+		trap "rm -rf '$build_root'" EXIT
+	fi
 
 	local staging_root="$build_root/staging"
-	local -a makepkg_env=("PKGDEST=$DIST_DIR")
+	local makepkg_config="$build_root/makepkg.conf"
+	write_threaded_makepkg_config "$makepkg_config"
 
 	if [ "$MAX_BUILD_THREADS" != "0" ]; then
-		local makepkg_config="$build_root/makepkg.conf"
-		write_threaded_makepkg_config "$makepkg_config"
-		makepkg_env+=("MAKEPKG_CONF=$makepkg_config")
 		info "Pacman package build/compression threads: $MAX_BUILD_THREADS"
 	fi
 
@@ -158,15 +172,39 @@ main() {
 	mkdir -p "$DIST_DIR"
 	info "Building ${PACKAGE_NAME}-${PACMAN_PKGVER}-${PACMAN_PKGREL}-${arch}.pkg.tar.zst"
 
+	find_built_package() {
+		local found=""
+		found="$(find "$DIST_DIR" \( -name "${PACKAGE_NAME}-${PACMAN_PKGVER}-*.pkg.tar.zst" \
+			-o -name "${PACKAGE_NAME}-${PACMAN_PKGVER}-*.pkg.tar.xz" \) \
+			-print -quit 2>/dev/null || true)"
+		if [ -z "$found" ]; then
+			found="$(find "$build_root" -maxdepth 1 \( -name "${PACKAGE_NAME}-${PACMAN_PKGVER}-*.pkg.tar.zst" \
+				-o -name "${PACKAGE_NAME}-${PACMAN_PKGVER}-*.pkg.tar.xz" \) \
+				-print -quit 2>/dev/null || true)"
+			if [ -n "$found" ]; then
+				cp "$found" "$DIST_DIR/"
+				found="$DIST_DIR/$(basename "$found")"
+			fi
+		fi
+		printf '%s\n' "$found"
+	}
+
 	# Build the package; --nodeps skips dependency checks at build time (they
 	# are enforced by pacman at install time), and --skipinteg is needed
 	# because we have no remote sources to verify.
-	(cd "$build_root" && env "${makepkg_env[@]}" makepkg -f --nodeps --skipinteg 2>&1) >&2
+	(cd "$build_root" && MAKEPKG_CONF="$makepkg_config" makepkg -f --nodeps --skipinteg 2>&1) >&2
 
 	local pkg_file=""
-	pkg_file="$(find "$DIST_DIR" \( -name "${PACKAGE_NAME}-${PACMAN_PKGVER}-*.pkg.tar.zst" \
-		-o -name "${PACKAGE_NAME}-${PACMAN_PKGVER}-*.pkg.tar.xz" \) \
-		-print -quit 2>/dev/null || true)"
+	pkg_file="$(find_built_package)"
+	if [ -z "$pkg_file" ]; then
+		local makepkg_path
+		local makepkg_trace_log="$build_root/makepkg-xtrace.log"
+		makepkg_path="$(command -v makepkg)"
+		info "makepkg returned without a package; retrying with bash xtrace workaround"
+		(cd "$build_root" && MAKEPKG_CONF="$makepkg_config" BASH_XTRACEFD=9 PS4='' \
+			bash -x "$makepkg_path" -f --nodeps --skipinteg 9>"$makepkg_trace_log" 2>&1) >&2
+		pkg_file="$(find_built_package)"
+	fi
 	[ -f "$pkg_file" ] || error "makepkg did not produce a package"
 
 	ln -sfn "$(basename "$pkg_file")" "$DIST_DIR/${PACKAGE_NAME}-latest.pkg.tar.zst"
