@@ -364,7 +364,12 @@ async fn capture_with_grim_geometry(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let detail = if stderr.is_empty() { stdout } else { stderr };
+        let detail = match (stderr.is_empty(), stdout.is_empty()) {
+            (false, false) => format!("stderr: {stderr}; stdout: {stdout}"),
+            (false, true) => stderr,
+            (true, false) => stdout,
+            (true, true) => format!("exit status {}", output.status),
+        };
         let _ = fs::remove_file(&path);
         let command = geometry
             .as_deref()

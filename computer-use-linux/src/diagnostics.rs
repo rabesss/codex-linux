@@ -10,13 +10,16 @@ use std::{
     collections::{BTreeMap, HashMap},
     env, fs,
     fs::OpenOptions,
+    io,
     os::unix::{
         fs::MetadataExt,
         net::{UnixDatagram, UnixStream},
     },
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Output, Stdio},
     sync::{Mutex, OnceLock},
+    thread,
+    time::{Duration, Instant},
 };
 
 const DESKTOP_ENV_KEYS: &[&str] = &[
@@ -888,7 +891,9 @@ fn active_portal_implementation() -> Option<String> {
         cmd.env("XDG_RUNTIME_DIR", runtime);
     }
 
-    let output = cmd.output().ok()?;
+    let output = command_output_with_timeout(cmd, Duration::from_secs(2))
+        .ok()
+        .flatten()?;
     if !output.status.success() {
         return None;
     }
@@ -903,6 +908,30 @@ fn active_portal_implementation() -> Option<String> {
             None
         }
     })
+}
+
+fn command_output_with_timeout(
+    mut command: Command,
+    timeout: Duration,
+) -> io::Result<Option<Output>> {
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let deadline = Instant::now() + timeout;
+
+    loop {
+        if child.try_wait()?.is_some() {
+            return child.wait_with_output().map(Some);
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(None);
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
 }
 
 fn accessibility_report() -> AccessibilityReport {

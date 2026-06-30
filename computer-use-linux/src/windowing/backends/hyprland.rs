@@ -486,14 +486,39 @@ fn monitor_for_bounds<'a>(
         if monitor.disabled {
             return false;
         }
-        let monitor_right = monitor
-            .x
-            .saturating_add(i32::try_from(monitor.width).unwrap_or(i32::MAX));
-        let monitor_bottom = monitor
-            .y
-            .saturating_add(i32::try_from(monitor.height).unwrap_or(i32::MAX));
+        let (monitor_width, monitor_height) = monitor_logical_size(monitor);
+        let monitor_right = monitor.x.saturating_add(monitor_width);
+        let monitor_bottom = monitor.y.saturating_add(monitor_height);
         x < monitor_right && right > monitor.x && y < monitor_bottom && bottom > monitor.y
     })
+}
+
+fn monitor_logical_size(monitor: &HyprlandTopologyMonitor) -> (i32, i32) {
+    let (width, height) = if monitor_transform_rotates(monitor.transform) {
+        (monitor.height, monitor.width)
+    } else {
+        (monitor.width, monitor.height)
+    };
+    (
+        scaled_logical_extent(width, monitor.scale),
+        scaled_logical_extent(height, monitor.scale),
+    )
+}
+
+fn monitor_transform_rotates(transform: i32) -> bool {
+    matches!(transform.rem_euclid(4), 1 | 3)
+}
+
+fn scaled_logical_extent(value: u32, scale: f64) -> i32 {
+    if !scale.is_finite() || scale <= 0.0 {
+        return i32::try_from(value).unwrap_or(i32::MAX);
+    }
+    let logical = (f64::from(value) / scale).ceil();
+    if logical >= f64::from(i32::MAX) {
+        i32::MAX
+    } else {
+        logical.max(0.0) as i32
+    }
 }
 
 pub fn activate_window(window_id: u64) -> Result<()> {
@@ -838,6 +863,58 @@ mod tests {
         let output = output_with_status(0, "ok\n", "");
 
         assert!(hyprctl_dispatch_succeeded(&output));
+    }
+
+    #[test]
+    fn monitor_matching_uses_scaled_and_rotated_logical_bounds() {
+        let monitors = vec![
+            HyprlandTopologyMonitor {
+                id: 1,
+                name: "SCALED".to_string(),
+                description: None,
+                x: 0,
+                y: 0,
+                width: 3000,
+                height: 2000,
+                physical_width: None,
+                physical_height: None,
+                scale: 2.0,
+                transform: 0,
+                reserved: None,
+                active_workspace_id: Some(1),
+                special_workspace_id: None,
+                focused: false,
+                disabled: false,
+            },
+            HyprlandTopologyMonitor {
+                id: 2,
+                name: "ROTATED".to_string(),
+                description: None,
+                x: 1600,
+                y: 0,
+                width: 1200,
+                height: 1920,
+                physical_width: None,
+                physical_height: None,
+                scale: 1.5,
+                transform: 1,
+                reserved: None,
+                active_workspace_id: Some(2),
+                special_workspace_id: None,
+                focused: true,
+                disabled: false,
+            },
+        ];
+        let bounds = WindowBounds {
+            x: Some(1700),
+            y: Some(700),
+            width: 50,
+            height: 50,
+        };
+
+        let monitor = monitor_for_bounds(&bounds, &monitors).unwrap();
+
+        assert_eq!(monitor.name, "ROTATED");
     }
 
     #[test]

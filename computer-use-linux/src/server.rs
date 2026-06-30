@@ -2782,11 +2782,8 @@ fn action_invocation_result(
     received: Option<serde_json::Value>,
     backend: &str,
 ) -> ActionOutput {
-    let mut output = if ok {
-        action_delivered(action, message, received, backend)
-    } else {
-        action_delivery_failed(action, message, received, backend)
-    };
+    let mut output = action_delivered(action, message, received, backend);
+    output.ok = ok;
     output.targeting = ActionTargeting::not_applicable(
         "The action addressed an accessibility object, not a target window.",
     );
@@ -4006,6 +4003,29 @@ mod tests {
         );
 
         assert!(output.ok);
+        assert_eq!(output.delivery.status, ActionDeliveryStatus::Delivered);
+        assert_eq!(output.delivery.backend.as_deref(), Some("at-spi"));
+        assert_eq!(
+            output.targeting.status,
+            ActionTargetingStatus::NotApplicable
+        );
+        assert_eq!(
+            output.observed_outcome.status,
+            ActionObservedOutcomeStatus::NotObserved
+        );
+    }
+
+    #[test]
+    fn accessibility_false_invocation_is_delivered_but_not_observed() {
+        let output = action_invocation_result(
+            "perform_action",
+            false,
+            "AT-SPI action 0 returned false.",
+            None,
+            "at-spi",
+        );
+
+        assert!(!output.ok);
         assert_eq!(output.delivery.status, ActionDeliveryStatus::Delivered);
         assert_eq!(output.delivery.backend.as_deref(), Some("at-spi"));
         assert_eq!(
