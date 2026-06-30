@@ -34,6 +34,7 @@ function buildKeybindsSettingsSource({
   vscodeApiExportName = "n",
   hotkeySettingsAsset,
   toggleAsset,
+  toggleExportName = "t",
   settingsRowAsset,
   settingsRowExportName = "n",
   settingsPageAsset,
@@ -148,7 +149,7 @@ function buildKeybindsSettingsSource({
     },
   ];
 
-  return `import{s as __toESM}from"./${chunkAsset}";${reactImport}import{${vscodeApiExportName} as __post}from"./${vscodeApiAsset}";import{i as HotkeyWindowHotkeyRow}from"./${hotkeySettingsAsset}";import{t as Toggle}from"./${toggleAsset}";import{${settingsRowExportName} as SettingsRow}from"./${settingsRowAsset}";import{${settingsSectionExportName} as SettingsSection}from"./${settingsSectionAsset}";import{${settingsGroupExportName} as SettingsGroup}from"./${settingsGroupAsset}";import{${settingsPageExportName} as SettingsPage}from"./${settingsPageAsset}";var React=__toESM(__reactFactory(),1),$=__jsxFactory(),KEYS={promptWindow:${JSON.stringify(linuxSettingsKeys.promptWindow)},systemTray:${JSON.stringify(linuxSettingsKeys.systemTray)},warmStart:${JSON.stringify(linuxSettingsKeys.warmStart)},autoUpdateOnExit:${JSON.stringify(linuxSettingsKeys.autoUpdateOnExit)}},KEYBIND_OVERRIDES_KEY=${JSON.stringify(linuxKeybindOverridesKey)},DEFAULT_SHORTCUTS=${JSON.stringify(defaultShortcuts)},KEYBIND_GROUPS=${JSON.stringify(keybindGroups)};function normalizeOverrides(value){if(!value||typeof value!="object"||Array.isArray(value))return{};return Object.fromEntries(Object.entries(value).filter(([key,accelerator])=>typeof key=="string"&&typeof accelerator=="string"&&accelerator.trim().length>0).map(([key,accelerator])=>[key,accelerator.trim()]))}function readLocalOverrides(){try{return normalizeOverrides(JSON.parse(localStorage.getItem(KEYBIND_OVERRIDES_KEY)||"{}"))}catch{return{}}}function writeLocalOverrides(next){try{localStorage.setItem(KEYBIND_OVERRIDES_KEY,JSON.stringify(next)),window.dispatchEvent(new CustomEvent("codex-linux-keybind-overrides-changed",{detail:next}))}catch{}}function useKeybindOverrides(){let[overrides,setOverrides]=React.useState(()=>readLocalOverrides()),[error,setError]=React.useState(null);React.useEffect(()=>{let alive=!0;__post("get-global-state",{params:{key:KEYBIND_OVERRIDES_KEY}}).then(result=>{if(!alive)return;let next=normalizeOverrides(result?.value);Object.keys(next).length>0?(setOverrides(next),writeLocalOverrides(next)):setOverrides(readLocalOverrides());setError(null)}).catch(err=>{alive&&setError(err instanceof Error?err.message:String(err))});return()=>{alive=!1}},[]);let update=React.useCallback((actionId,accelerator)=>{setOverrides(previous=>{let next={...previous},defaultValue=typeof DEFAULT_SHORTCUTS[actionId]=="string"?DEFAULT_SHORTCUTS[actionId]:"",trimmed=String(accelerator??"").trim();trimmed.length===0||trimmed===defaultValue?delete next[actionId]:next[actionId]=trimmed;writeLocalOverrides(next);__post("set-global-state",{params:{key:KEYBIND_OVERRIDES_KEY,value:next}}).then(()=>setError(null)).catch(err=>setError(err instanceof Error?err.message:String(err)));return next})},[]);return{overrides,error,update}}function useLinuxSetting(key,defaultValue){let[value,setValue]=React.useState(defaultValue),[isLoading,setIsLoading]=React.useState(!0),[error,setError]=React.useState(null);React.useEffect(()=>{let alive=!0;setIsLoading(!0);__post("get-global-state",{params:{key}}).then(result=>{alive&&(setValue(result?.value??defaultValue),setError(null))}).catch(err=>{alive&&setError(err instanceof Error?err.message:String(err))}).finally(()=>{alive&&setIsLoading(!1)});return()=>{alive=!1}},[key,defaultValue]);let update=React.useCallback(next=>{let previous=value;setValue(next);setError(null);__post("set-global-state",{params:{key,value:next}}).catch(err=>{setValue(previous);setError(err instanceof Error?err.message:String(err))})},[key,value]);return{value,isLoading,error,update}}function LinuxToggle({settingKey,label,description,defaultValue=!0}){let{value,isLoading,error,update}=useLinuxSetting(settingKey,defaultValue),details=error?$.jsxs("div",{className:"flex flex-col gap-1",children:[$.jsx("span",{children:description}),$.jsx("span",{className:"text-token-error-foreground",children:error})]}):description;return $.jsx(SettingsRow,{label,description:details,control:$.jsx(Toggle,{checked:value,disabled:isLoading,onChange:update,ariaLabel:label})})}${linuxDesktopReadinessComponentSource()}function normalizeCapturedKey(key){let map={" ":"Space",ArrowUp:"Up",ArrowDown:"Down",ArrowLeft:"Left",ArrowRight:"Right",Escape:"Esc",",":",",".":".","/":"/","\\\\":"\\\\","[":"[","]":"]",";":";","'":"'","-":"-","=":"=","+":"Plus"};if(map[key])return map[key];if(/^.$/.test(key))return key.toUpperCase();return key}function formatAcceleratorForInput(event){if(!(event.ctrlKey||event.altKey||event.metaKey))return null;if(["Control","Shift","Alt","Meta"].includes(event.key))return null;let parts=[];event.ctrlKey&&parts.push("Ctrl");event.altKey&&parts.push("Alt");event.shiftKey&&parts.push("Shift");event.metaKey&&parts.push("Command");let key=normalizeCapturedKey(event.key);return key?[...parts,key].join("+"):null}function ShortcutInput({value,defaultValue,changed,onChange}){let[draft,setDraft]=React.useState(value);React.useEffect(()=>setDraft(value),[value]);let commit=next=>onChange(String(next??"").trim());return $.jsxs("div",{className:"flex min-w-[260px] items-center justify-end gap-2",children:[$.jsx("input",{className:"h-8 w-[190px] rounded-md border border-token-border-default bg-token-bg-primary px-2 text-sm text-token-text-primary outline-none focus:border-token-border-strong","data-codex-keybind-input":!0,value:draft,placeholder:defaultValue,onChange:event=>{setDraft(event.target.value),onChange(event.target.value)},onBlur:()=>commit(draft),onKeyDown:event=>{if(event.key==="Escape"){setDraft(value);return}if(event.key==="Enter"){event.preventDefault(),commit(draft);return}let captured=formatAcceleratorForInput(event);captured&&(event.preventDefault(),setDraft(captured),onChange(captured))}}),$.jsx("button",{type:"button",className:"h-8 rounded-md border border-token-border-default px-2 text-xs text-token-text-secondary disabled:opacity-40",disabled:!changed,onClick:()=>onChange(""),children:"Reset"})]})}function KeybindRow({action,overrides,update}){let defaultValue=typeof DEFAULT_SHORTCUTS[action.id]=="string"?DEFAULT_SHORTCUTS[action.id]:action.defaultAccelerator??"",hasOverride=Object.prototype.hasOwnProperty.call(overrides,action.id),value=hasOverride?overrides[action.id]:defaultValue,changed=hasOverride&&value!==defaultValue,description=$.jsxs("div",{className:"flex flex-col gap-1",children:[$.jsx("span",{children:action.description}),$.jsxs("span",{className:"text-token-text-tertiary",children:["Default: ",defaultValue||"Unassigned"]})]});return $.jsx(SettingsRow,{label:action.label,description,control:$.jsx(ShortcutInput,{value,defaultValue,changed,onChange:next=>update(action.id,next)})})}function KeybindGroup({group,overrides,update}){return $.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:group.title}),$.jsx(SettingsSection.Content,{children:$.jsx(SettingsGroup,{children:group.actions.map(action=>$.jsx(KeybindRow,{action,overrides,update},action.id))})})]},group.title)}function KeybindsSettings(){let{overrides,error,update}=useKeybindOverrides();return $.jsx(SettingsPage,{title:"Keybinds",subtitle:"App shortcuts and Linux desktop behavior.",children:$.jsxs("div",{className:"flex flex-col gap-6",children:[$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"App shortcuts"}),error?$.jsx("div",{className:"px-1 text-sm text-token-error-foreground",children:error}):null]}),...KEYBIND_GROUPS.map(group=>$.jsx(KeybindGroup,{group,overrides,update},group.title)),$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Readiness"}),$.jsx(SettingsSection.Content,{children:$.jsx(SettingsGroup,{children:$.jsx(LinuxReadiness,{})})})]}),$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Global shortcuts"}),$.jsx(SettingsSection.Content,{children:$.jsxs(SettingsGroup,{children:[$.jsx(HotkeyWindowHotkeyRow,{}),$.jsx(LinuxToggle,{settingKey:KEYS.promptWindow,label:"Compact prompt window",description:"Allow --prompt-chat and --hotkey-window to open the compact prompt window and keep it prewarmed."})]})})]}),$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Linux desktop"}),$.jsx(SettingsSection.Content,{children:$.jsxs(SettingsGroup,{children:[$.jsx(LinuxToggle,{settingKey:KEYS.systemTray,label:"System tray",description:"Show the Codex system tray icon and keep the app available from the tray."}),$.jsx(LinuxToggle,{settingKey:KEYS.warmStart,label:"Warm start",description:"Use the running app for launch actions instead of starting a fresh Electron instance."})]})})]}),$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Updates"}),$.jsx(SettingsSection.Content,{children:$.jsx(SettingsGroup,{children:$.jsx(LinuxToggle,{settingKey:KEYS.autoUpdateOnExit,label:"Install updates when you close Codex",description:"When on, a ready update waits for Codex to close and then installs. When off, updates wait until you click Update."})})})]})]})})}export{KeybindsSettings,KeybindsSettings as default};\n//# sourceMappingURL=${keybindsSettingsAsset}.map\n`;
+  return `import{s as __toESM}from"./${chunkAsset}";${reactImport}import{${vscodeApiExportName} as __post}from"./${vscodeApiAsset}";import{i as HotkeyWindowHotkeyRow}from"./${hotkeySettingsAsset}";import{${toggleExportName} as Toggle}from"./${toggleAsset}";import{${settingsRowExportName} as SettingsRow}from"./${settingsRowAsset}";import{${settingsSectionExportName} as SettingsSection}from"./${settingsSectionAsset}";import{${settingsGroupExportName} as SettingsGroup}from"./${settingsGroupAsset}";import{${settingsPageExportName} as SettingsPage}from"./${settingsPageAsset}";var React=__toESM(__reactFactory(),1),$=__jsxFactory(),KEYS={promptWindow:${JSON.stringify(linuxSettingsKeys.promptWindow)},systemTray:${JSON.stringify(linuxSettingsKeys.systemTray)},warmStart:${JSON.stringify(linuxSettingsKeys.warmStart)},autoUpdateOnExit:${JSON.stringify(linuxSettingsKeys.autoUpdateOnExit)}},KEYBIND_OVERRIDES_KEY=${JSON.stringify(linuxKeybindOverridesKey)},DEFAULT_SHORTCUTS=${JSON.stringify(defaultShortcuts)},KEYBIND_GROUPS=${JSON.stringify(keybindGroups)};function normalizeOverrides(value){if(!value||typeof value!="object"||Array.isArray(value))return{};return Object.fromEntries(Object.entries(value).filter(([key,accelerator])=>typeof key=="string"&&typeof accelerator=="string"&&accelerator.trim().length>0).map(([key,accelerator])=>[key,accelerator.trim()]))}function readLocalOverrides(){try{return normalizeOverrides(JSON.parse(localStorage.getItem(KEYBIND_OVERRIDES_KEY)||"{}"))}catch{return{}}}function writeLocalOverrides(next){try{localStorage.setItem(KEYBIND_OVERRIDES_KEY,JSON.stringify(next)),window.dispatchEvent(new CustomEvent("codex-linux-keybind-overrides-changed",{detail:next}))}catch{}}function useKeybindOverrides(){let[overrides,setOverrides]=React.useState(()=>readLocalOverrides()),[error,setError]=React.useState(null);React.useEffect(()=>{let alive=!0;__post("get-global-state",{params:{key:KEYBIND_OVERRIDES_KEY}}).then(result=>{if(!alive)return;let next=normalizeOverrides(result?.value);Object.keys(next).length>0?(setOverrides(next),writeLocalOverrides(next)):setOverrides(readLocalOverrides());setError(null)}).catch(err=>{alive&&setError(err instanceof Error?err.message:String(err))});return()=>{alive=!1}},[]);let update=React.useCallback((actionId,accelerator)=>{setOverrides(previous=>{let next={...previous},defaultValue=typeof DEFAULT_SHORTCUTS[actionId]=="string"?DEFAULT_SHORTCUTS[actionId]:"",trimmed=String(accelerator??"").trim();trimmed.length===0||trimmed===defaultValue?delete next[actionId]:next[actionId]=trimmed;writeLocalOverrides(next);__post("set-global-state",{params:{key:KEYBIND_OVERRIDES_KEY,value:next}}).then(()=>setError(null)).catch(err=>setError(err instanceof Error?err.message:String(err)));return next})},[]);return{overrides,error,update}}function useLinuxSetting(key,defaultValue){let[value,setValue]=React.useState(defaultValue),[isLoading,setIsLoading]=React.useState(!0),[error,setError]=React.useState(null);React.useEffect(()=>{let alive=!0;setIsLoading(!0);__post("get-global-state",{params:{key}}).then(result=>{alive&&(setValue(result?.value??defaultValue),setError(null))}).catch(err=>{alive&&setError(err instanceof Error?err.message:String(err))}).finally(()=>{alive&&setIsLoading(!1)});return()=>{alive=!1}},[key,defaultValue]);let update=React.useCallback(next=>{let previous=value;setValue(next);setError(null);__post("set-global-state",{params:{key,value:next}}).catch(err=>{setValue(previous);setError(err instanceof Error?err.message:String(err))})},[key,value]);return{value,isLoading,error,update}}function LinuxToggle({settingKey,label,description,defaultValue=!0}){let{value,isLoading,error,update}=useLinuxSetting(settingKey,defaultValue),details=error?$.jsxs("div",{className:"flex flex-col gap-1",children:[$.jsx("span",{children:description}),$.jsx("span",{className:"text-token-error-foreground",children:error})]}):description;return $.jsx(SettingsRow,{label,description:details,control:$.jsx(Toggle,{checked:value,disabled:isLoading,onChange:update,ariaLabel:label})})}${linuxDesktopReadinessComponentSource()}function normalizeCapturedKey(key){let map={" ":"Space",ArrowUp:"Up",ArrowDown:"Down",ArrowLeft:"Left",ArrowRight:"Right",Escape:"Esc",",":",",".":".","/":"/","\\\\":"\\\\","[":"[","]":"]",";":";","'":"'","-":"-","=":"=","+":"Plus"};if(map[key])return map[key];if(/^.$/.test(key))return key.toUpperCase();return key}function formatAcceleratorForInput(event){if(!(event.ctrlKey||event.altKey||event.metaKey))return null;if(["Control","Shift","Alt","Meta"].includes(event.key))return null;let parts=[];event.ctrlKey&&parts.push("Ctrl");event.altKey&&parts.push("Alt");event.shiftKey&&parts.push("Shift");event.metaKey&&parts.push("Command");let key=normalizeCapturedKey(event.key);return key?[...parts,key].join("+"):null}function ShortcutInput({value,defaultValue,changed,onChange}){let[draft,setDraft]=React.useState(value);React.useEffect(()=>setDraft(value),[value]);let commit=next=>onChange(String(next??"").trim());return $.jsxs("div",{className:"flex min-w-[260px] items-center justify-end gap-2",children:[$.jsx("input",{className:"h-8 w-[190px] rounded-md border border-token-border-default bg-token-bg-primary px-2 text-sm text-token-text-primary outline-none focus:border-token-border-strong","data-codex-keybind-input":!0,value:draft,placeholder:defaultValue,onChange:event=>{setDraft(event.target.value),onChange(event.target.value)},onBlur:()=>commit(draft),onKeyDown:event=>{if(event.key==="Escape"){setDraft(value);return}if(event.key==="Enter"){event.preventDefault(),commit(draft);return}let captured=formatAcceleratorForInput(event);captured&&(event.preventDefault(),setDraft(captured),onChange(captured))}}),$.jsx("button",{type:"button",className:"h-8 rounded-md border border-token-border-default px-2 text-xs text-token-text-secondary disabled:opacity-40",disabled:!changed,onClick:()=>onChange(""),children:"Reset"})]})}function KeybindRow({action,overrides,update}){let defaultValue=typeof DEFAULT_SHORTCUTS[action.id]=="string"?DEFAULT_SHORTCUTS[action.id]:action.defaultAccelerator??"",hasOverride=Object.prototype.hasOwnProperty.call(overrides,action.id),value=hasOverride?overrides[action.id]:defaultValue,changed=hasOverride&&value!==defaultValue,description=$.jsxs("div",{className:"flex flex-col gap-1",children:[$.jsx("span",{children:action.description}),$.jsxs("span",{className:"text-token-text-tertiary",children:["Default: ",defaultValue||"Unassigned"]})]});return $.jsx(SettingsRow,{label:action.label,description,control:$.jsx(ShortcutInput,{value,defaultValue,changed,onChange:next=>update(action.id,next)})})}function KeybindGroup({group,overrides,update}){return $.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:group.title}),$.jsx(SettingsSection.Content,{children:$.jsx(SettingsGroup,{children:group.actions.map(action=>$.jsx(KeybindRow,{action,overrides,update},action.id))})})]},group.title)}function KeybindsSettings(){let{overrides,error,update}=useKeybindOverrides();return $.jsx(SettingsPage,{title:"Keybinds",subtitle:"App shortcuts and Linux desktop behavior.",children:$.jsxs("div",{className:"flex flex-col gap-6",children:[$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"App shortcuts"}),error?$.jsx("div",{className:"px-1 text-sm text-token-error-foreground",children:error}):null]}),...KEYBIND_GROUPS.map(group=>$.jsx(KeybindGroup,{group,overrides,update},group.title)),$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Readiness"}),$.jsx(SettingsSection.Content,{children:$.jsx(SettingsGroup,{children:$.jsx(LinuxReadiness,{})})})]}),$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Global shortcuts"}),$.jsx(SettingsSection.Content,{children:$.jsxs(SettingsGroup,{children:[$.jsx(HotkeyWindowHotkeyRow,{}),$.jsx(LinuxToggle,{settingKey:KEYS.promptWindow,label:"Compact prompt window",description:"Allow --prompt-chat and --hotkey-window to open the compact prompt window and keep it prewarmed."})]})})]}),$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Linux desktop"}),$.jsx(SettingsSection.Content,{children:$.jsxs(SettingsGroup,{children:[$.jsx(LinuxToggle,{settingKey:KEYS.systemTray,label:"System tray",description:"Show the Codex system tray icon and keep the app available from the tray."}),$.jsx(LinuxToggle,{settingKey:KEYS.warmStart,label:"Warm start",description:"Use the running app for launch actions instead of starting a fresh Electron instance."})]})})]}),$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Updates"}),$.jsx(SettingsSection.Content,{children:$.jsx(SettingsGroup,{children:$.jsx(LinuxToggle,{settingKey:KEYS.autoUpdateOnExit,label:"Install updates when you close Codex",description:"When on, a ready update waits for Codex to close and then installs. When off, updates wait until you click Update."})})})]})]})})}export{KeybindsSettings,KeybindsSettings as default};\n//# sourceMappingURL=${keybindsSettingsAsset}.map\n`;
 }
 
 function buildLinuxDesktopSettingsSource({
@@ -159,6 +160,7 @@ function buildLinuxDesktopSettingsSource({
   vscodeApiAsset,
   vscodeApiExportName = "n",
   toggleAsset,
+  toggleExportName = "t",
   settingsRowAsset,
   settingsRowExportName = "n",
   settingsPageAsset,
@@ -172,7 +174,181 @@ function buildLinuxDesktopSettingsSource({
     ? `import{${reactExportName} as __reactFactory,t as __jsxFactory}from"./${jsxRuntimeAsset}";`
     : `import{${reactExportName} as __reactFactory}from"./${reactAsset}";import{t as __jsxFactory}from"./${jsxRuntimeAsset}";`;
 
-  return `import{s as __toESM}from"./${chunkAsset}";${reactImport}import{${vscodeApiExportName} as __post}from"./${vscodeApiAsset}";import{t as Toggle}from"./${toggleAsset}";import{${settingsRowExportName} as SettingsRow}from"./${settingsRowAsset}";import{${settingsSectionExportName} as SettingsSection}from"./${settingsSectionAsset}";import{${settingsGroupExportName} as SettingsGroup}from"./${settingsGroupAsset}";import{${settingsPageExportName} as SettingsPage}from"./${settingsPageAsset}";var React=__toESM(__reactFactory(),1),$=__jsxFactory(),KEYS={promptWindow:${JSON.stringify(linuxSettingsKeys.promptWindow)},systemTray:${JSON.stringify(linuxSettingsKeys.systemTray)},warmStart:${JSON.stringify(linuxSettingsKeys.warmStart)},autoUpdateOnExit:${JSON.stringify(linuxSettingsKeys.autoUpdateOnExit)}};function useLinuxSetting(key,defaultValue){let[value,setValue]=React.useState(defaultValue),[isLoading,setIsLoading]=React.useState(!0),[error,setError]=React.useState(null);React.useEffect(()=>{let alive=!0;setIsLoading(!0);__post("get-global-state",{params:{key}}).then(result=>{alive&&(setValue(result?.value??defaultValue),setError(null))}).catch(err=>{alive&&setError(err instanceof Error?err.message:String(err))}).finally(()=>{alive&&setIsLoading(!1)});return()=>{alive=!1}},[key,defaultValue]);let update=React.useCallback(next=>{let previous=value;setValue(next);setError(null);__post("set-global-state",{params:{key,value:next}}).catch(err=>{setValue(previous);setError(err instanceof Error?err.message:String(err))})},[key,value]);return{value,isLoading,error,update}}function LinuxToggle({settingKey,label,description,defaultValue=!0}){let{value,isLoading,error,update}=useLinuxSetting(settingKey,defaultValue),details=error?$.jsxs("div",{className:"flex flex-col gap-1",children:[$.jsx("span",{children:description}),$.jsx("span",{className:"text-token-error-foreground",children:error})]}):description;return $.jsx(SettingsRow,{label,description:details,control:$.jsx(Toggle,{checked:value,disabled:isLoading,onChange:update,ariaLabel:label})})}${linuxDesktopReadinessComponentSource()}${linuxBuildInfoComponentSource()}function LinuxDesktopSettings(){return $.jsx(SettingsPage,{title:"Linux desktop",subtitle:"Launcher, tray, prompt window, and update behavior.",children:$.jsxs("div",{className:"flex flex-col gap-6",children:[$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Readiness"}),$.jsx(SettingsSection.Content,{children:$.jsx(SettingsGroup,{children:$.jsx(LinuxReadiness,{})})})]}),$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Enabled Linux features"}),$.jsx(SettingsSection.Content,{children:$.jsx(LinuxFeatureCoverage,{})})]}),$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Global shortcuts"}),$.jsx(SettingsSection.Content,{children:$.jsx(SettingsGroup,{children:$.jsx(LinuxToggle,{settingKey:KEYS.promptWindow,label:"Compact prompt window",description:"Allow --prompt-chat and --hotkey-window to open the compact prompt window and keep it prewarmed."})})})]}),$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Desktop integration"}),$.jsx(SettingsSection.Content,{children:$.jsxs(SettingsGroup,{children:[$.jsx(LinuxToggle,{settingKey:KEYS.systemTray,label:"System tray",description:"Show the Codex system tray icon and keep the app available from the tray."}),$.jsx(LinuxToggle,{settingKey:KEYS.warmStart,label:"Warm start",description:"Use the running app for launch actions instead of starting a fresh Electron instance."})]})})]}),$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Updates"}),$.jsx(SettingsSection.Content,{children:$.jsx(SettingsGroup,{children:$.jsx(LinuxToggle,{settingKey:KEYS.autoUpdateOnExit,label:"Install updates when you close Codex",description:"When on, a ready update waits for Codex to close and then installs. When off, updates wait until you click Update."})})})]})]})})}export{LinuxDesktopSettings,LinuxDesktopSettings as default};\n//# sourceMappingURL=${linuxDesktopSettingsAsset}.map\n`;
+  return `import{s as __toESM}from"./${chunkAsset}";${reactImport}import{${vscodeApiExportName} as __post}from"./${vscodeApiAsset}";import{${toggleExportName} as Toggle}from"./${toggleAsset}";import{${settingsRowExportName} as SettingsRow}from"./${settingsRowAsset}";import{${settingsSectionExportName} as SettingsSection}from"./${settingsSectionAsset}";import{${settingsGroupExportName} as SettingsGroup}from"./${settingsGroupAsset}";import{${settingsPageExportName} as SettingsPage}from"./${settingsPageAsset}";var React=__toESM(__reactFactory(),1),$=__jsxFactory(),KEYS={promptWindow:${JSON.stringify(linuxSettingsKeys.promptWindow)},systemTray:${JSON.stringify(linuxSettingsKeys.systemTray)},warmStart:${JSON.stringify(linuxSettingsKeys.warmStart)},autoUpdateOnExit:${JSON.stringify(linuxSettingsKeys.autoUpdateOnExit)}};function useLinuxSetting(key,defaultValue){let[value,setValue]=React.useState(defaultValue),[isLoading,setIsLoading]=React.useState(!0),[error,setError]=React.useState(null);React.useEffect(()=>{let alive=!0;setIsLoading(!0);__post("get-global-state",{params:{key}}).then(result=>{alive&&(setValue(result?.value??defaultValue),setError(null))}).catch(err=>{alive&&setError(err instanceof Error?err.message:String(err))}).finally(()=>{alive&&setIsLoading(!1)});return()=>{alive=!1}},[key,defaultValue]);let update=React.useCallback(next=>{let previous=value;setValue(next);setError(null);__post("set-global-state",{params:{key,value:next}}).catch(err=>{setValue(previous);setError(err instanceof Error?err.message:String(err))})},[key,value]);return{value,isLoading,error,update}}function LinuxToggle({settingKey,label,description,defaultValue=!0}){let{value,isLoading,error,update}=useLinuxSetting(settingKey,defaultValue),details=error?$.jsxs("div",{className:"flex flex-col gap-1",children:[$.jsx("span",{children:description}),$.jsx("span",{className:"text-token-error-foreground",children:error})]}):description;return $.jsx(SettingsRow,{label,description:details,control:$.jsx(Toggle,{checked:value,disabled:isLoading,onChange:update,ariaLabel:label})})}${linuxDesktopReadinessComponentSource()}${linuxBuildInfoComponentSource()}function LinuxDesktopSettings(){return $.jsx(SettingsPage,{title:"Linux desktop",subtitle:"Launcher, tray, prompt window, and update behavior.",children:$.jsxs("div",{className:"flex flex-col gap-6",children:[$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Readiness"}),$.jsx(SettingsSection.Content,{children:$.jsx(SettingsGroup,{children:$.jsx(LinuxReadiness,{})})})]}),$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Enabled Linux features"}),$.jsx(SettingsSection.Content,{children:$.jsx(LinuxFeatureCoverage,{})})]}),$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Global shortcuts"}),$.jsx(SettingsSection.Content,{children:$.jsx(SettingsGroup,{children:$.jsx(LinuxToggle,{settingKey:KEYS.promptWindow,label:"Compact prompt window",description:"Allow --prompt-chat and --hotkey-window to open the compact prompt window and keep it prewarmed."})})})]}),$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Desktop integration"}),$.jsx(SettingsSection.Content,{children:$.jsxs(SettingsGroup,{children:[$.jsx(LinuxToggle,{settingKey:KEYS.systemTray,label:"System tray",description:"Show the Codex system tray icon and keep the app available from the tray."}),$.jsx(LinuxToggle,{settingKey:KEYS.warmStart,label:"Warm start",description:"Use the running app for launch actions instead of starting a fresh Electron instance."})]})})]}),$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Updates"}),$.jsx(SettingsSection.Content,{children:$.jsx(SettingsGroup,{children:$.jsx(LinuxToggle,{settingKey:KEYS.autoUpdateOnExit,label:"Install updates when you close Codex",description:"When on, a ready update waits for Codex to close and then installs. When off, updates wait until you click Update."})})})]})]})})}export{LinuxDesktopSettings,LinuxDesktopSettings as default};\n//# sourceMappingURL=${linuxDesktopSettingsAsset}.map\n`;
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function parseNamedImports(source) {
+  const imports = [];
+  const importPattern = /import\{([^}]*)\}from"\.\/([^"]+)"/g;
+  let match;
+  while ((match = importPattern.exec(source)) != null) {
+    const [, rawImports, assetName] = match;
+    for (const rawEntry of rawImports.split(",")) {
+      const entry = rawEntry.trim();
+      if (entry.length === 0) {
+        continue;
+      }
+      const alias = entry.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/);
+      if (alias != null) {
+        imports.push({ assetName, exportName: alias[1], localName: alias[2] });
+      } else if (/^[A-Za-z_$][\w$]*$/.test(entry)) {
+        imports.push({ assetName, exportName: entry, localName: entry });
+      }
+    }
+  }
+  return imports;
+}
+
+function firstExportName(source, preferred = "t") {
+  const exportList = source.match(/export\{([^}]*)\}/)?.[1];
+  if (exportList == null) {
+    return preferred;
+  }
+
+  let fallback = null;
+  for (const rawEntry of exportList.split(",")) {
+    const entry = rawEntry.trim();
+    const match = entry.match(/^([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/);
+    if (match == null) {
+      continue;
+    }
+    const exportName = match[2] ?? match[1];
+    if (exportName === preferred) {
+      return preferred;
+    }
+    fallback ??= exportName;
+  }
+
+  return fallback ?? preferred;
+}
+
+function looksLikeSettingsToggleUse(source, localName) {
+  const callPattern = new RegExp(`(?:jsx|jsxs)\\(${escapeRegExp(localName)},\\{`, "g");
+  let match;
+  while ((match = callPattern.exec(source)) != null) {
+    const nearbySource = source.slice(Math.max(0, match.index - 90), match.index + 700);
+    if (
+      nearbySource.includes("control:") &&
+      nearbySource.includes("checked:") &&
+      nearbySource.includes("onChange:") &&
+      (nearbySource.includes("ariaLabel:") || nearbySource.includes('"aria-label":'))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function looksLikeSettingsToggleComponent(source) {
+  return (
+    source.includes("checked") &&
+    source.includes("onChange") &&
+    source.includes("disabled") &&
+    (source.includes("ariaLabel") || source.includes('"aria-label"') || source.includes("aria-checked"))
+  );
+}
+
+function findImportedSettingsToggle(webviewAssetsDir) {
+  const assets = fs
+    .readdirSync(webviewAssetsDir)
+    .filter((name) => name.endsWith(".js"))
+    .sort();
+
+  for (const assetName of assets) {
+    const source = fs.readFileSync(path.join(webviewAssetsDir, assetName), "utf8");
+    for (const imported of parseNamedImports(source)) {
+      if (
+        fs.existsSync(path.join(webviewAssetsDir, imported.assetName)) &&
+        looksLikeSettingsToggleUse(source, imported.localName)
+      ) {
+        return {
+          toggleAsset: imported.assetName,
+          toggleExportName: imported.exportName,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+function findSettingsRowImportedToggle(webviewAssetsDir, settingsRowAsset) {
+  if (settingsRowAsset == null) {
+    return null;
+  }
+
+  const settingsRowSource = readWebviewAsset(webviewAssetsDir, settingsRowAsset);
+  for (const imported of parseNamedImports(settingsRowSource)) {
+    const importedPath = path.join(webviewAssetsDir, imported.assetName);
+    if (!fs.existsSync(importedPath)) {
+      continue;
+    }
+    const importedSource = fs.readFileSync(importedPath, "utf8");
+    if (looksLikeSettingsToggleComponent(importedSource)) {
+      return {
+        toggleAsset: imported.assetName,
+        toggleExportName: imported.exportName,
+      };
+    }
+  }
+
+  return null;
+}
+
+function buildFallbackToggleAsset(jsxRuntimeAsset) {
+  return {
+    assetName: "linux-settings-toggle-linux.js",
+    exportName: "t",
+    source: [
+      `import{t as __jsxFactory}from"./${jsxRuntimeAsset}";`,
+      "var $=__jsxFactory();",
+      'function t({checked:e,disabled:n,onChange:r,ariaLabel:o}){let i=!!e;return $.jsx("button",{type:"button",role:"switch","aria-checked":i,"aria-label":o,disabled:n,onClick:()=>{n||r?.(!i)},className:`relative h-6 w-11 rounded-full border border-token-border-default transition-colors ${i?`bg-token-bg-inverse`:`bg-token-bg-tertiary`}`,children:$.jsx("span",{className:`block h-5 w-5 rounded-full bg-token-bg-primary shadow transition-transform ${i?`translate-x-5`:`translate-x-0`}`})})}',
+      "export{t};\n",
+    ].join(""),
+  };
+}
+
+function resolveSettingsToggleAsset(webviewAssetsDir, jsxRuntimeAsset, settingsRowAsset = null) {
+  const directToggleAsset = fs
+    .readdirSync(webviewAssetsDir)
+    .filter((name) => /^toggle-.*\.js$/.test(name))
+    .sort()[0] ?? null;
+  if (directToggleAsset != null) {
+    return {
+      toggleAsset: directToggleAsset,
+      toggleExportName: firstExportName(readWebviewAsset(webviewAssetsDir, directToggleAsset), "t"),
+      generatedAssets: [],
+    };
+  }
+
+  const importedToggle = findImportedSettingsToggle(webviewAssetsDir);
+  if (importedToggle != null) {
+    return { ...importedToggle, generatedAssets: [] };
+  }
+
+  const settingsRowToggle = findSettingsRowImportedToggle(webviewAssetsDir, settingsRowAsset);
+  if (settingsRowToggle != null) {
+    return { ...settingsRowToggle, generatedAssets: [] };
+  }
+
+  const fallback = buildFallbackToggleAsset(jsxRuntimeAsset);
+  if (fs.existsSync(path.join(webviewAssetsDir, fallback.assetName))) {
+    return {
+      toggleAsset: fallback.assetName,
+      toggleExportName: firstExportName(readWebviewAsset(webviewAssetsDir, fallback.assetName), fallback.exportName),
+      generatedAssets: [],
+    };
+  }
+
+  return {
+    toggleAsset: fallback.assetName,
+    toggleExportName: fallback.exportName,
+    generatedAssets: [fallback],
+  };
 }
 
 function resolveSettingsAssetDependencies(extractedDir, { includeHotkeySettings = true } = {}) {
@@ -199,8 +375,12 @@ function resolveSettingsAssetDependencies(extractedDir, { includeHotkeySettings 
         "hotkey settings asset",
       )
     : null;
-  const toggleAsset = findRequiredWebviewAsset(webviewAssetsDir, /^toggle-.*\.js$/, null, "toggle asset");
   const settingsRowAsset = findRequiredWebviewAsset(webviewAssetsDir, /^settings-row-.*\.js$/, null, "settings row asset");
+  const {
+    toggleAsset,
+    toggleExportName,
+    generatedAssets,
+  } = resolveSettingsToggleAsset(webviewAssetsDir, jsxRuntimeAsset, settingsRowAsset);
   const settingsRowExportName = findSettingsRowExportName(
     readWebviewAsset(webviewAssetsDir, settingsRowAsset),
   );
@@ -228,6 +408,8 @@ function resolveSettingsAssetDependencies(extractedDir, { includeHotkeySettings 
     vscodeApiExportName,
     hotkeySettingsAsset,
     toggleAsset,
+    toggleExportName,
+    generatedAssets,
     settingsRowAsset,
     settingsRowExportName,
     settingsPageAsset: settingsLayoutAsset,
@@ -246,6 +428,7 @@ function resolveKeybindsSettingsAsset(extractedDir) {
   return {
     filePath: path.join(webviewAssetsDir, keybindsSettingsAsset),
     source: buildKeybindsSettingsSource(dependencies),
+    generatedAssets: dependencies.generatedAssets ?? [],
   };
 }
 
@@ -258,6 +441,7 @@ function resolveLinuxDesktopSettingsAsset(extractedDir) {
   return {
     filePath: path.join(webviewAssetsDir, linuxDesktopSettingsAsset),
     source: buildLinuxDesktopSettingsSource(dependencies),
+    generatedAssets: dependencies.generatedAssets ?? [],
   };
 }
 
@@ -375,12 +559,12 @@ function hasLegacyLinuxDesktopSettingsExtensionPoints(extractedDir) {
     (name) => /^(?:app-main|index|settings-page)-.*\.js$/.test(name),
     (name) => /^settings-row-.*\.js$/.test(name),
     (name) => /^settings-content-layout-.*\.js$/.test(name),
-    (name) => /^toggle-.*\.js$/.test(name),
   ].every((predicate) => assets.some(predicate));
 }
 
 function patchKeybindsSettingsAssets(extractedDir) {
   try {
+    const webviewAssetsDir = path.join(extractedDir, "webview", "assets");
     const hasNativeSettings = hasNativeKeyboardShortcutsSettings(extractedDir);
     if (
       hasNativeSettings &&
@@ -431,6 +615,16 @@ function patchKeybindsSettingsAssets(extractedDir) {
 
     fs.writeFileSync(settingsAsset.filePath, settingsAsset.source, "utf8");
     let changed = previousSettingsSource !== settingsAsset.source ? 1 : 0;
+    for (const generatedAsset of settingsAsset.generatedAssets ?? []) {
+      const generatedPath = path.join(webviewAssetsDir, generatedAsset.assetName);
+      const previousSource = fs.existsSync(generatedPath)
+        ? fs.readFileSync(generatedPath, "utf8")
+        : null;
+      if (previousSource !== generatedAsset.source) {
+        fs.writeFileSync(generatedPath, generatedAsset.source, "utf8");
+        changed += 1;
+      }
+    }
     for (const patch of patches) {
       if (patch.patchedSource !== patch.currentSource) {
         fs.writeFileSync(patch.filePath, patch.patchedSource, "utf8");

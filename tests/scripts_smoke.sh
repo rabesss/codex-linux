@@ -2638,6 +2638,7 @@ HTML
     printf 'ELECTRON_LAUNCHED\n'
     printf 'CODEX_LINUX_CLI_MISSING=%s\n' "${CODEX_LINUX_CLI_MISSING:-unset}"
     printf 'CODEX_CLI_PATH=%s\n' "${CODEX_CLI_PATH:-unset}"
+    printf 'CODEX_LINUX_ORIGINAL_PATH=%s\n' "${CODEX_LINUX_ORIGINAL_PATH:-unset}"
     printf 'TMPDIR=%s\n' "${TMPDIR:-unset}"
     printf 'TMPDIR_MODE=%s\n' "$(stat -c %a "${TMPDIR:-}" 2>/dev/null || printf missing)"
     if [ -d "${TMPDIR:-}" ] && [ ! -L "${TMPDIR:-}" ]; then
@@ -2687,6 +2688,7 @@ SCRIPT
     assert_contains "$missing_cli_electron_log" "ELECTRON_LAUNCHED"
     assert_contains "$missing_cli_electron_log" "CODEX_LINUX_CLI_MISSING=1"
     assert_contains "$missing_cli_electron_log" "CODEX_CLI_PATH=unset"
+    assert_contains "$missing_cli_electron_log" "CODEX_LINUX_ORIGINAL_PATH=$missing_cli_workspace:/usr/bin:/bin"
     local missing_cli_short_tmpdir
     missing_cli_short_tmpdir="$(sed -n 's/^TMPDIR=//p' "$missing_cli_electron_log" | tail -1)"
     case "$missing_cli_short_tmpdir" in
@@ -2783,6 +2785,8 @@ if 'LAUNCHER_ARGS=()' not in source:
     raise SystemExit("launcher must keep a sanitized argv for launcher-only flags")
 if 'CODEX_LINUX_FEATURES_DIR="$SCRIPT_DIR/.codex-linux/features"' not in source:
     raise SystemExit("launcher must expose the app-local Linux feature resource directory")
+if 'if [ -z "${CODEX_LINUX_ORIGINAL_PATH+x}" ]; then' not in source:
+    raise SystemExit("launcher must capture the original PATH only when it has not already been provided")
 if 'export CODEX_HOME CODEX_LINUX_APP_ID CODEX_LINUX_APP_DISPLAY_NAME CODEX_LINUX_WEBVIEW_PORT CODEX_LINUX_SETTINGS_FILE CODEX_LINUX_FEATURES_DIR' not in source:
     raise SystemExit("launcher must export CODEX_HOME and Linux feature resource directory")
 if 'configure_multi_launch_instance "$@"' not in source:
@@ -3162,6 +3166,7 @@ PY
     assert_contains "$REPO_DIR/scripts/lib/node-runtime.sh" "MANAGED_NODE_VERSION"
     assert_contains "$REPO_DIR/scripts/lib/package-common.sh" "node-runtime"
     assert_contains "$REPO_DIR/tests/fixtures/create-packaged-app-fixture.sh" "resources/node-runtime/bin"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "CODEX_LINUX_ORIGINAL_PATH"
     assert_contains "$REPO_DIR/.github/workflows/ci.yml" "tests/fixtures/create-packaged-app-fixture.sh codex-app"
     assert_contains "$REPO_DIR/.github/workflows/ci.yml" "for file in scripts/patches/"
     assert_contains "$REPO_DIR/.github/workflows/ci.yml" "make check-supported"

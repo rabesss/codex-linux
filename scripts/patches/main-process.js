@@ -62,6 +62,77 @@ function applyLinuxFileManagerPatch(currentSource) {
   return patchedSource;
 }
 
+function applyLinuxTerminalOriginalPathPatch(currentSource) {
+  if (
+    currentSource.includes("codexLinuxOriginalTerminalPath(") &&
+    currentSource.includes("CODEX_LINUX_ORIGINAL_PATH")
+  ) {
+    return currentSource;
+  }
+
+  const methodPattern =
+    /async buildTerminalEnv\(([^)]*)\)\{let ([A-Za-z_$][\w$]*)=\{\.\.\.process\.env\};([\s\S]*?)return process\.platform!==`win32`&&\(\2\.TERM=([A-Za-z_$][\w$]*),delete \2\.TERMINFO,delete \2\.TERMINFO_DIRS\),([A-Za-z_$][\w$]*)\.\$r\(\2\)\}/u;
+  const match = currentSource.match(methodPattern);
+  if (match == null) {
+    if (currentSource.includes("buildTerminalEnv") && currentSource.includes("node-pty")) {
+      console.warn("WARN: Could not recognize terminal environment builder — skipping Linux terminal PATH patch");
+    }
+    return currentSource;
+  }
+
+  const [, rawParams, envAlias] = match;
+  const params = rawParams.split(",").map((part) => part.trim()).filter(Boolean);
+  const sessionAlias = params[2] ?? null;
+  if (sessionAlias == null) {
+    console.warn("WARN: Could not identify terminal session argument — skipping Linux terminal PATH patch");
+    return currentSource;
+  }
+
+  const helper = [
+    "function codexLinuxOriginalTerminalPath(e){",
+    "try{",
+    "let saved=process.env.CODEX_LINUX_ORIGINAL_PATH;",
+    "if(process.platform!==`linux`||typeof saved!==`string`||saved.length===0)return e;",
+    "let current=typeof e.PATH===`string`?e.PATH:``;",
+    "let runtime=process.env.CODEX_MANAGED_NODE_RUNTIME_DIR;",
+    "let runtimeBin=typeof runtime===`string`&&runtime.length>0?`${runtime}/bin`:null;",
+    "if(current.length===0||current===process.env.PATH){e.PATH=saved;delete e.CODEX_LINUX_ORIGINAL_PATH;return e}",
+    "if(runtimeBin!=null){",
+    "let next=[];",
+    "for(let entry of current.split(`:`)){entry===runtimeBin?next.push(...saved.split(`:`)):next.push(entry)}",
+    "e.PATH=next.join(`:`)",
+    "}",
+    "delete e.CODEX_LINUX_ORIGINAL_PATH",
+    "}catch{}",
+    "return e",
+    "}",
+  ].join("");
+  const insertHelper = (source) => {
+    if (source.includes("function codexLinuxOriginalTerminalPath(")) {
+      return source;
+    }
+    const useStrictPrefix = /^(['"])use strict\1;/.exec(source);
+    const insertionIndex = useStrictPrefix == null ? 0 : useStrictPrefix[0].length;
+    return source.slice(0, insertionIndex) + helper + source.slice(insertionIndex);
+  };
+  const method = match[0];
+  const returnPrefix = `return process.platform!==\`win32\`&&(${envAlias}.TERM=`;
+  const restoreCall =
+    `process.platform===\`linux\`&&this.isLocalTerminalSession(${sessionAlias})&&codexLinuxOriginalTerminalPath(${envAlias});`;
+  if (method.includes(restoreCall)) {
+    return insertHelper(currentSource);
+  }
+
+  const patchedMethod = method.replace(returnPrefix, `${restoreCall}${returnPrefix}`);
+  if (patchedMethod === method) {
+    console.warn("WARN: Could not place Linux terminal PATH restoration — skipping terminal PATH patch");
+    return currentSource;
+  }
+
+  const patchedSource = currentSource.replace(method, patchedMethod);
+  return insertHelper(patchedSource);
+}
+
 function applyLinuxWindowOptionsPatch(currentSource, iconAsset) {
   let patchedSource = currentSource;
 
@@ -99,11 +170,28 @@ function applyLinuxWindowOptionsPatch(currentSource, iconAsset) {
   return applyDefinedBrowserWindowOptionsPatch(patchedSource);
 }
 
+function findLocalPrimaryAppearanceAlias(source, offset) {
+  const prefix = source.slice(Math.max(0, offset - 1200), offset);
+  const matches = [...prefix.matchAll(/appearance:([A-Za-z_$][\w$]*)=`primary`/g)];
+  if (matches.length === 0) {
+    return null;
+  }
+
+  const lastMatch = matches.at(-1);
+  const afterLastMatch = prefix.slice((lastMatch.index ?? 0) + lastMatch[0].length);
+  if (/appearance:(?:[A-Za-z_$][\w$]*=)?`(?!primary`)[^`]+`/.test(afterLastMatch)) {
+    return null;
+  }
+
+  return lastMatch[1];
+}
+
 function applyDefinedBrowserWindowOptionsPatch(currentSource) {
   const browserWindowOptionsRegex =
     /show:([A-Za-z_$][\w$]*),parent:([A-Za-z_$][\w$]*),focusable:([A-Za-z_$][\w$]*),(\.\.\.process\.platform===`win32`\?\{autoHideMenuBar:!0\}:process\.platform===`linux`\?\{icon:process\.resourcesPath\+`\/\.\.\/content\/webview\/assets\/[^`]+`\}:\{\},)backgroundMaterial:([A-Za-z_$][\w$]*)\?\?void 0,\.\.\.([A-Za-z_$][\w$]*),minWidth:([A-Za-z_$][\w$]*)\?\.width,minHeight:\7\?\.height,webPreferences:([A-Za-z_$][\w$]*)/g;
 
-  return currentSource.replace(
+  const appearanceAlias = currentSource.match(/appearance:([A-Za-z_$][\w$]*)=`primary`/)?.[1] ?? null;
+  let patchedSource = currentSource.replace(
     browserWindowOptionsRegex,
     (
       _match,
@@ -115,9 +203,63 @@ function applyDefinedBrowserWindowOptionsPatch(currentSource) {
       appearanceOptionsAlias,
       minimumSizeAlias,
       webPreferencesAlias,
-    ) =>
-      `show:${showAlias},...${parentAlias}==null?{}:{parent:${parentAlias}},...${focusableAlias}==null?{}:{focusable:${focusableAlias}},${platformOptions}...${backgroundMaterialAlias}==null?{}:{backgroundMaterial:${backgroundMaterialAlias}},...${appearanceOptionsAlias},...${minimumSizeAlias}==null?{}:{minWidth:${minimumSizeAlias}.width,minHeight:${minimumSizeAlias}.height},webPreferences:${webPreferencesAlias}`,
+      matchOffset,
+    ) => {
+      const localAppearanceAlias = findLocalPrimaryAppearanceAlias(currentSource, matchOffset);
+      const focusableFragment = localAppearanceAlias == null
+        ? `...${focusableAlias}==null?{}:{focusable:${focusableAlias}}`
+        : `...process.platform===\`linux\`&&${localAppearanceAlias}===\`primary\`?{focusable:!0}:${focusableAlias}==null?{}:{focusable:${focusableAlias}}`;
+      const linuxPrimaryFocusFallback = localAppearanceAlias == null
+        ? ""
+        : `...process.platform===\`linux\`&&${localAppearanceAlias}===\`primary\`?{focusable:!0}:{},`;
+      return `show:${showAlias},...${parentAlias}==null?{}:{parent:${parentAlias}},${focusableFragment},${platformOptions}...${backgroundMaterialAlias}==null?{}:{backgroundMaterial:${backgroundMaterialAlias}},...${appearanceOptionsAlias},...${minimumSizeAlias}==null?{}:{minWidth:${minimumSizeAlias}.width,minHeight:${minimumSizeAlias}.height},${linuxPrimaryFocusFallback}webPreferences:${webPreferencesAlias}`;
+    },
   );
+
+  if (appearanceAlias != null) {
+    const forwardedWindowOptionsRegex =
+      /show:([A-Za-z_$][\w$]*),parent:([A-Za-z_$][\w$]*),((?:\.\.\.process\.platform===`win32`\?\{autoHideMenuBar:!0\}:process\.platform===`linux`\?\{icon:process\.resourcesPath\+`\/\.\.\/content\/webview\/assets\/[^`]+`\}:\{\},)?)backgroundMaterial:([A-Za-z_$][\w$]*)\?\?void 0,\.\.\.([A-Za-z_$][\w$]*),minWidth:([A-Za-z_$][\w$]*)\?\.width,minHeight:\6\?\.height,webPreferences:([A-Za-z_$][\w$]*)/g;
+    patchedSource = patchedSource.replace(
+      forwardedWindowOptionsRegex,
+      (
+        _match,
+        showAlias,
+        parentAlias,
+        platformOptions,
+        backgroundMaterialAlias,
+        appearanceOptionsAlias,
+        minimumSizeAlias,
+        webPreferencesAlias,
+        matchOffset,
+      ) => {
+        const localAppearanceAlias = findLocalPrimaryAppearanceAlias(currentSource, matchOffset);
+        const linuxPrimaryFocusFallback = localAppearanceAlias == null
+          ? ""
+          : `...process.platform===\`linux\`&&${localAppearanceAlias}===\`primary\`?{focusable:!0}:{},`;
+        return `show:${showAlias},...${parentAlias}==null?{}:{parent:${parentAlias}},${platformOptions}...${backgroundMaterialAlias}==null?{}:{backgroundMaterial:${backgroundMaterialAlias}},...${appearanceOptionsAlias},...${minimumSizeAlias}==null?{}:{minWidth:${minimumSizeAlias}.width,minHeight:${minimumSizeAlias}.height},${linuxPrimaryFocusFallback}webPreferences:${webPreferencesAlias}`;
+      },
+    );
+  }
+
+  if (
+    appearanceAlias != null &&
+    !patchedSource.includes(`process.platform===\`linux\`&&${appearanceAlias}===\`primary\``)
+  ) {
+    const appearanceIndex = patchedSource.indexOf(`appearance:${appearanceAlias}=\`primary\``);
+    const bodyPrefixIndex = appearanceIndex === -1 ? -1 : patchedSource.indexOf("){", appearanceIndex);
+    const bodyStart = bodyPrefixIndex === -1 ? -1 : bodyPrefixIndex + 1;
+    const bodyEnd = bodyStart === -1 ? -1 : findMatchingBrace(patchedSource, bodyStart);
+    if (bodyStart !== -1 && bodyEnd !== -1) {
+      const body = patchedSource.slice(bodyStart, bodyEnd + 1);
+      const patchedBody = body.replace(
+        /focusable:!1,(webPreferences:[A-Za-z_$][\w$]*)/,
+        `focusable:process.platform===\`linux\`&&${appearanceAlias}===\`primary\`?!0:!1,$1`,
+      );
+      patchedSource = patchedSource.slice(0, bodyStart) + patchedBody + patchedSource.slice(bodyEnd + 1);
+    }
+  }
+
+  return patchedSource;
 }
 
 function applyLinuxMenuPatch(currentSource) {
@@ -1409,6 +1551,7 @@ module.exports = {
   applyLinuxBuildInfoTrayPatch,
   applyLinuxFileManagerPatch,
   applyLinuxGitOriginsSourceFallbackPatch,
+  applyLinuxTerminalOriginalPathPatch,
   applyLinuxMenuPatch,
   applyLinuxOpaqueBackgroundPatch,
   applyLinuxOwlFeatureBindingFallbackPatch,

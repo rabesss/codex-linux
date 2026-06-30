@@ -37,6 +37,7 @@ const {
   applyLinuxExplicitTrayQuitPatch,
   applyLinuxFileManagerPatch,
   applyLinuxGitOriginsSourceFallbackPatch,
+  applyLinuxTerminalOriginalPathPatch,
   applyLinuxQuitGuardPatch,
   applyLinuxHotkeyWindowPrewarmPatch,
   applyLinuxLaunchActionArgsPatch,
@@ -777,6 +778,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-explicit-tray-quit",
     "linux-explicit-ipc-quit",
     "linux-window-options",
+    "linux-terminal-original-path",
     "linux-menu",
     "linux-multi-instance-bootstrap-lock",
     "linux-set-icon",
@@ -1361,6 +1363,38 @@ test("adds Linux file manager support without relying on exact minified variable
   assert.match(patched, /linux:\{label:`File Manager`/);
   assert.match(patched, /detect:\(\)=>`linux-file-manager`/);
   assert.match(patched, /n\.shell\.openPath\(__codexOpenTarget\)/);
+});
+
+function terminalEnvBundleFixture() {
+  return [
+    "var termName=`xterm-256color`,envFormatter={$r:e=>e};",
+    "class TerminalEnvFixture{isLocalTerminalSession(e){return e===`local`}async buildTerminalEnv(e,t,n){let r={...process.env};r.PATH=`/workspace/bin:${process.env.CODEX_MANAGED_NODE_RUNTIME_DIR}/bin:/custom/bin`;return process.platform!==`win32`&&(r.TERM=termName,delete r.TERMINFO,delete r.TERMINFO_DIRS),envFormatter.$r(r)}}",
+  ].join("");
+}
+
+test("restores the user PATH for local Linux integrated terminals", async () => {
+  const patched = applyPatchTwice(applyLinuxTerminalOriginalPathPatch, terminalEnvBundleFixture());
+
+  assert.match(patched, /function codexLinuxOriginalTerminalPath/);
+  assert.match(patched, /this\.isLocalTerminalSession\(n\)&&codexLinuxOriginalTerminalPath\(r\)/);
+
+  const env = await vm.runInNewContext(
+    `${patched};new TerminalEnvFixture().buildTerminalEnv(null,null,\`local\`)`,
+    {
+      process: {
+        platform: "linux",
+        env: {
+          CODEX_LINUX_ORIGINAL_PATH: "/usr/bin:/bin",
+          CODEX_MANAGED_NODE_RUNTIME_DIR: "/opt/codex-node",
+          PATH: "/opt/codex-node/bin:/usr/bin:/bin",
+        },
+      },
+    },
+  );
+
+  assert.equal(env.PATH, "/workspace/bin:/usr/bin:/bin:/custom/bin");
+  assert.equal(Object.prototype.hasOwnProperty.call(env, "CODEX_LINUX_ORIGINAL_PATH"), false);
+  assert.equal(env.TERM, "xterm-256color");
 });
 
 test("preserves user-enabled remote_control config on Linux", () => {
@@ -2001,6 +2035,116 @@ test("patches remaining Linux window icon snippets when another window is alread
     patchedSetIcon,
     /function createSecondWindow\(\)\{process\.platform===`linux`&&E\.setIcon\(process\.resourcesPath\+`\/\.\.\/content\/webview\/assets\/app-test\.png`\),E\.once\(`ready-to-show`,\(\)=>\{\}\)\}/,
   );
+});
+
+test("restores the launcher PATH for local integrated terminal envs", async () => {
+  const source = [
+    "let p=require(`node-pty`);",
+    "class T{isLocalTerminalSession(e){return e?.local===!0}async buildTerminalEnv(e,t,n){let r={...process.env};return process.platform!==`win32`&&(r.TERM=e,delete r.TERMINFO,delete r.TERMINFO_DIRS),p.$r(r)}}",
+  ].join("");
+  const patched = applyPatchTwice(applyLinuxTerminalOriginalPathPatch, source);
+  const context = {
+    process: {
+      platform: "linux",
+      env: {
+        PATH: "/opt/codex/resources/node-runtime/bin:/usr/bin",
+        CODEX_LINUX_ORIGINAL_PATH: "/home/tester/.local/bin:/usr/bin",
+        CODEX_MANAGED_NODE_RUNTIME_DIR: "/opt/codex/resources/node-runtime",
+      },
+    },
+    require(name) {
+      if (name === "node-pty") return { $r: (env) => env };
+      return require(name);
+    },
+  };
+
+  assert.match(patched, /function codexLinuxOriginalTerminalPath/);
+  assert.match(patched, /this\.isLocalTerminalSession\(n\)&&codexLinuxOriginalTerminalPath\(r\)/);
+
+  const result = await vm.runInNewContext(
+    `(async()=>{${patched};return{local:await new T().buildTerminalEnv(\`xterm-256color\`,null,{local:true}),remote:await new T().buildTerminalEnv(\`xterm\`,null,{local:false})}})()`,
+    context,
+  );
+  const localEnv = result.local;
+  assert.equal(localEnv.PATH, "/home/tester/.local/bin:/usr/bin");
+  assert.equal(localEnv.CODEX_LINUX_ORIGINAL_PATH, undefined);
+  assert.equal(localEnv.TERM, "xterm-256color");
+
+  const remoteEnv = result.remote;
+  assert.equal(remoteEnv.PATH, "/opt/codex/resources/node-runtime/bin:/usr/bin");
+});
+
+test("keeps the primary Linux BrowserWindow focusable after option spreads", () => {
+  const source = [
+    "appearance:a=`primary`;",
+    "show:s,parent:p,focusable:f,...process.platform===`win32`?{autoHideMenuBar:!0}:process.platform===`linux`?{icon:process.resourcesPath+`/../content/webview/assets/app-test.png`}:{},backgroundMaterial:b??void 0,...o,minWidth:m?.width,minHeight:m?.height,webPreferences:w",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxWindowOptionsPatch, source, "app-test.png");
+
+  assert.match(
+    patched,
+    /\.\.\.o,\.\.\.m==null\?\{\}:\{minWidth:m\.width,minHeight:m\.height\},\.\.\.process\.platform===`linux`&&a===`primary`\?\{focusable:!0\}:\{\},webPreferences:w/,
+  );
+});
+
+test("keeps the primary Linux BrowserWindow focusable when focusability is forwarded by spread", () => {
+  const source = [
+    "appearance:a=`primary`;",
+    "show:s,parent:p,...process.platform===`win32`?{autoHideMenuBar:!0}:process.platform===`linux`?{icon:process.resourcesPath+`/../content/webview/assets/app-test.png`}:{},backgroundMaterial:b??void 0,...o,minWidth:m?.width,minHeight:m?.height,webPreferences:w",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxWindowOptionsPatch, source, "app-test.png");
+
+  assert.match(patched, /show:s,\.\.\.p==null\?\{\}:\{parent:p\}/);
+  assert.match(
+    patched,
+    /\.\.\.process\.platform===`linux`&&a===`primary`\?\{focusable:!0\}:\{\},webPreferences:w/,
+  );
+});
+
+test("does not force focusability for auxiliary windows without primary appearance", () => {
+  const source = "appearance:a=`avatarOverlay`;let w={show:!1,focusable:!1,webPreferences:p}";
+
+  const patched = applyPatchTwice(applyLinuxWindowOptionsPatch, source, "app-test.png");
+
+  assert.equal(patched, source);
+});
+
+test("keeps BrowserWindow focusability fallback scoped to the primary option block", () => {
+  const primaryOptions = [
+    "appearance:a=`primary`;",
+    "show:s,parent:p,focusable:f,...process.platform===`win32`?{autoHideMenuBar:!0}:process.platform===`linux`?{icon:process.resourcesPath+`/../content/webview/assets/app-test.png`}:{},backgroundMaterial:b??void 0,...o,minWidth:m?.width,minHeight:m?.height,webPreferences:w",
+  ].join("");
+  const overlayOptions = [
+    "appearance:`avatarOverlay`;",
+    "show:u,parent:v,focusable:x,...process.platform===`win32`?{autoHideMenuBar:!0}:process.platform===`linux`?{icon:process.resourcesPath+`/../content/webview/assets/app-test.png`}:{},backgroundMaterial:y??void 0,...z,minWidth:q?.width,minHeight:q?.height,webPreferences:r",
+  ].join("");
+
+  const patched = applyPatchTwice(
+    applyLinuxWindowOptionsPatch,
+    `${primaryOptions};${overlayOptions}`,
+    "app-test.png",
+  );
+
+  assert.equal((patched.match(/process\.platform===`linux`&&a===`primary`\?\{focusable:!0\}/g) ?? []).length, 2);
+  assert.doesNotMatch(patched, /process\.platform===`linux`&&x===`primary`/);
+  assert.match(patched, /show:u,\.\.\.v==null\?\{\}:\{parent:v\},\.\.\.x==null\?\{\}:\{focusable:x\}/);
+});
+
+test("scopes boolean primary focusability fallback away from avatar overlay windows", () => {
+  const source = [
+    "class WindowFactory{async createWindow({appearance:e=`primary`,webPreferences:t}){return this.windowManager.createWindow({appearance:e,focusable:!1,webPreferences:t})}}",
+    "class AvatarOverlay{createWindow(){return this.windowManager.createWindow({appearance:`avatarOverlay`,focusable:!1,webPreferences:a})}}",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxWindowOptionsPatch, source, null);
+
+  assert.match(
+    patched,
+    /appearance:e,focusable:process\.platform===`linux`&&e===`primary`\?!0:!1,webPreferences:t/,
+  );
+  assert.match(patched, /appearance:`avatarOverlay`,focusable:!1,webPreferences:a/);
 });
 
 test("adds Linux tray support including the platform guard", () => {
@@ -2824,6 +2968,7 @@ test("keeps Linux desktop toggles visible with native Keyboard Shortcuts", () =>
     assert.match(linuxDesktopSource, /codex-linux-system-tray-enabled/);
     assert.match(linuxDesktopSource, /codex-linux-auto-update-on-exit/);
     assert.match(linuxDesktopSource, /import\{z as __post\}from"\.\/setting-storage-A\.js"/);
+    assert.match(linuxDesktopSource, /import\{t as Toggle\}from"\.\/toggle-A\.js"/);
 
     assert.match(
       fs.readFileSync(path.join(assetsDir, "settings-sections-A.js"), "utf8"),
@@ -2840,6 +2985,71 @@ test("keeps Linux desktop toggles visible with native Keyboard Shortcuts", () =>
     assert.match(settingsPageSource, /"linux-desktop":q,"general-settings":q/);
     assert.match(settingsPageSource, /slugs:\[`general-settings`,`linux-desktop`,`profile`/);
     assert.match(settingsPageSource, /case`linux-desktop`:case`general-settings`/);
+
+    const secondResult = patchKeybindsSettingsAssets(extractedDir);
+    assert.equal(secondResult.matched, true);
+    assert.equal(secondResult.changed, 0);
+  } finally {
+    fs.rmSync(extractedDir, { recursive: true, force: true });
+  }
+});
+
+test("discovers renamed toggle assets from settings control usage", () => {
+  const { extractedDir, assetsDir } = createNativeKeyboardShortcutsSettingsFixture();
+  try {
+    fs.rmSync(path.join(assetsDir, "toggle-A.js"));
+    fs.writeFileSync(
+      path.join(assetsDir, "switch-A.js"),
+      "function q(e){return null}export{q as s};",
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(assetsDir, "settings-controls-A.js"),
+      'import{s as Switch}from"./switch-A.js";function P(){return $.jsx(Row,{control:$.jsx(Switch,{checked:a,onChange:b,ariaLabel:`System tray`})})}',
+      "utf8",
+    );
+
+    const result = patchKeybindsSettingsAssets(extractedDir);
+
+    assert.equal(result.matched, true);
+    assert.equal(fs.existsSync(path.join(assetsDir, linuxDesktopSettingsAsset)), true);
+    const linuxDesktopSource = fs.readFileSync(
+      path.join(assetsDir, linuxDesktopSettingsAsset),
+      "utf8",
+    );
+    assert.match(linuxDesktopSource, /import\{s as Toggle\}from"\.\/switch-A\.js"/);
+    assert.match(linuxDesktopSource, /import\{r as SettingsRow\}from"\.\/settings-row-A\.js"/);
+    assert.match(linuxDesktopSource, /Installed readiness/);
+    assert.match(linuxDesktopSource, /Build profile/);
+    assert.match(linuxDesktopSource, /Enabled features/);
+    assert.match(linuxDesktopSource, /System tray/);
+    assert.doesNotMatch(linuxDesktopSource, /toggle-A\.js/);
+  } finally {
+    fs.rmSync(extractedDir, { recursive: true, force: true });
+  }
+});
+
+test("generates a Linux settings toggle fallback when no reusable toggle asset is available", () => {
+  const { extractedDir, assetsDir } = createNativeKeyboardShortcutsSettingsFixture();
+  try {
+    fs.rmSync(path.join(assetsDir, "toggle-A.js"));
+
+    const result = patchKeybindsSettingsAssets(extractedDir);
+
+    assert.equal(result.matched, true);
+    assert.ok(result.changed >= 5);
+    assert.equal(fs.existsSync(path.join(assetsDir, "linux-settings-toggle-linux.js")), true);
+    const linuxDesktopSource = fs.readFileSync(
+      path.join(assetsDir, linuxDesktopSettingsAsset),
+      "utf8",
+    );
+    const fallbackSource = fs.readFileSync(
+      path.join(assetsDir, "linux-settings-toggle-linux.js"),
+      "utf8",
+    );
+    assert.match(linuxDesktopSource, /import\{t as Toggle\}from"\.\/linux-settings-toggle-linux\.js"/);
+    assert.match(fallbackSource, /role:"switch"/);
+    assert.match(fallbackSource, /aria-checked/);
 
     const secondResult = patchKeybindsSettingsAssets(extractedDir);
     assert.equal(secondResult.matched, true);

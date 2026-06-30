@@ -8,6 +8,7 @@ const {
   applyLinuxOpaqueBackgroundPatch,
   applyLinuxFileManagerPatch,
   applyLinuxBuildInfoTrayPatch,
+  applyLinuxTerminalOriginalPathPatch,
   applyLinuxTrayPatch,
   applyLinuxSingleInstancePatch,
   applyLinuxGitOriginsSourceFallbackPatch,
@@ -63,6 +64,13 @@ module.exports = [
     order: 100,
     ciPolicy: "required-upstream",
     apply: applyLinuxFileManagerPatch,
+  },
+  {
+    id: "linux-terminal-original-path",
+    phase: "main-bundle",
+    order: 105,
+    ciPolicy: "optional",
+    apply: applyLinuxTerminalOriginalPathPatch,
   },
   {
     id: "linux-tray",
